@@ -1,0 +1,126 @@
+<Window x:Class="AudioBookPlayer.Views.OverlayToolbarWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="AudioBookPlayer.OverlayToolbar"
+        SizeToContent="WidthAndHeight"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        Focusable="False"
+        WindowStartupLocation="Manual"
+        UseLayoutRounding="True">
+
+    <!--
+        网易云桌面歌词那套：歌词旁边挂一条小工具条。
+        它是独立的、不穿透的窗口，所以字幕本体可以一直保持鼠标穿透，而它始终点得到。
+        不碰主窗口就能解锁拖动、调字号、改颜色、播放暂停。
+    -->
+    <Border x:Name="Chip" CornerRadius="9" Background="#D9121011" BorderThickness="1" Padding="4">
+        <Border.Style>
+            <Style TargetType="Border">
+                <Setter Property="BorderBrush" Value="{DynamicResource BorderStrongBrush}" />
+                <Setter Property="Opacity" Value="0.42" />
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Opacity" Value="1" />
+                        <Setter Property="Background" Value="#F2121011" />
+                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+        </Border.Style>
+
+        <StackPanel Orientation="Horizontal">
+            <Button x:Name="LockButton" Click="OnLockClick" MinWidth="46" Padding="8,3" FontSize="12"
+                    ToolTip="解锁后可以直接拖动屏幕上的字幕，再点一下锁定（锁定后鼠标完全穿透）" />
+            <Border Width="1" Margin="6,3" Background="{DynamicResource BorderSoftBrush}" />
+
+            <Button x:Name="FontDownButton" Content="A−" Click="OnFontDownClick" MinWidth="30" Padding="6,3" FontSize="12"
+                    ToolTip="字幕小一点（解锁后也可以直接滚轮）" />
+            <Button x:Name="FontUpButton" Content="A+" Click="OnFontUpClick" MinWidth="30" Margin="4,0,0,0" Padding="6,3" FontSize="12"
+                    ToolTip="字幕大一点" />
+
+            <!-- 颜色：点开一个小面板，字色 / 描边色 / 描边粗细 -->
+            <Button x:Name="ColorButton" Content="🎨" Click="OnColorClick" MinWidth="34" Margin="4,0,0,0" Padding="6,3" FontSize="12"
+                    ToolTip="调整字幕颜色与描边">
+                <Button.ContextMenu>
+                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <StackPanel Margin="8,6,8,8" Width="232">
+                            <TextBlock Text="字色" FontSize="11" Margin="2,0,0,6"
+                                       Foreground="{DynamicResource TextMutedBrush}" />
+                            <ItemsControl ItemsSource="{Binding ForegroundColorChoices}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
+                                                Tag="{Binding}" Click="OnForegroundSwatchClick" ToolTip="{Binding}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Text="粗细" FontSize="11" Margin="2,10,0,6"
+                                       Foreground="{DynamicResource TextMutedBrush}" />
+                            <ComboBox ItemsSource="{Binding FontWeightChoices}"
+                                      DisplayMemberPath="Value" SelectedValuePath="Key"
+                                      SelectedValue="{Binding FontWeightName, Mode=TwoWay}" />
+
+                            <TextBlock Text="描边色" FontSize="11" Margin="2,10,0,6"
+                                       Foreground="{DynamicResource TextMutedBrush}" />
+                            <ItemsControl ItemsSource="{Binding OutlineColorChoices}">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
+                                                Tag="{Binding}" Click="OnOutlineSwatchClick" ToolTip="{Binding}" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Text="描边粗细" FontSize="11" Margin="2,12,0,4"
+                                       Foreground="{DynamicResource TextMutedBrush}" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Slider Grid.Column="0" Minimum="0" Maximum="10" VerticalAlignment="Center"
+                                        Value="{Binding OutlineThickness}" />
+                                <TextBlock Grid.Column="1" MinWidth="34" Margin="8,0,0,0" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextSecondaryBrush}" FontSize="12"
+                                           Text="{Binding OutlineThickness, StringFormat={}{0:0.0}}" />
+                            </Grid>
+
+                            <Button Content="恢复默认外观" Margin="0,12,0,0" Padding="8,4" FontSize="12"
+                                    Click="OnResetAppearanceClick" HorizontalAlignment="Left" />
+                        </StackPanel>
+                    </ContextMenu>
+                </Button.ContextMenu>
+            </Button>
+
+            <Button x:Name="PreviousButton" Content="⏮" Click="OnPreviousClick" MinWidth="34" Margin="4,0,0,0" Padding="6,3" FontSize="12"
+                    ToolTip="上一章" />
+            <Button x:Name="SkipBackButton" Content="⟲ 10s" Click="OnSkipBackClick" MinWidth="48" Margin="4,0,0,0" Padding="6,3" FontSize="12"
+                    ToolTip="快退（秒数跟设置里的步长走）" />
+            <Button x:Name="PlayButton" Content="⏯" Click="OnPlayClick" MinWidth="34" Margin="4,0,0,0" Padding="6,3" FontSize="12"
+                    ToolTip="播放 / 暂停" />
+            <Button x:Name="SkipForwardButton" Content="⟳ 10s" Click="OnSkipForwardClick" MinWidth="48" Margin="4,0,0,0" Padding="6,3" FontSize="12"
+                    ToolTip="快进" />
+            <Button x:Name="NextButton" Content="⏭" Click="OnNextClick" MinWidth="34" Margin="4,0,0,0" Padding="6,3" FontSize="12"
+                    ToolTip="下一章" />
+            <Button Content="✕" Click="OnHideClick" MinWidth="30" Margin="4,0,0,0" Padding="6,3" FontSize="12"
+                    ToolTip="隐藏桌面字幕（Ctrl+Alt+S 可以再叫出来）" />
+        </StackPanel>
+    </Border>
+</Window>

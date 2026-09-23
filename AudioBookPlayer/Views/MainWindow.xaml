@@ -1,0 +1,979 @@
+<Window x:Class="AudioBookPlayer.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:AudioBookPlayer.ViewModels"
+        Title="KATARU"
+        Width="1240" Height="840"
+        MinWidth="1000" MinHeight="660"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource WindowBackgroundBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}"
+        FontFamily="Microsoft YaHei UI, Segoe UI"
+        FontSize="13"
+        UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Ideal">
+
+    <Window.Resources>
+        <Style x:Key="SettingsSectionStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+        <Style x:Key="SettingsLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Background="{DynamicResource WindowBackgroundBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ==================== 顶栏 ==================== -->
+        <Border Grid.Row="0" Background="{DynamicResource PanelBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="0,0,0,1"
+                Padding="18,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image Source="pack://application:,,,/Assets/app-header.png" Width="36" Height="36"
+                           RenderOptions.BitmapScalingMode="HighQuality" />
+                    <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding CurrentBookTitle}" FontSize="16" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" MaxWidth="320" />
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,2,0,0"
+                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" MaxWidth="320"
+                                   Text="{Binding CurrentChapterTitle}" />
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <Button Content="书库" Command="{Binding SwitchModeCommand}"
+                            CommandParameter="{x:Static vm:AppMode.Library}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource ModeTabStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLibraryMode}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+
+                    <Button Content="播放" Command="{Binding SwitchModeCommand}"
+                            CommandParameter="{x:Static vm:AppMode.Player}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource ModeTabStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPlayerMode}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+
+                    <Button Content="阅读" Command="{Binding SwitchModeCommand}"
+                            CommandParameter="{x:Static vm:AppMode.Reading}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource ModeTabStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsReadingMode}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+
+                    <Button Content="设置" Command="{Binding SwitchModeCommand}"
+                            CommandParameter="{x:Static vm:AppMode.Settings}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource ModeTabStyle}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSettingsMode}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                                        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Margin="0,0,8,0" Padding="8,4" CornerRadius="6"
+                            Background="{DynamicResource SurfaceAltBrush}"
+                            ToolTip="Ctrl + 滚轮缩放界面，Ctrl + 0 回到 100%"
+                            Visibility="{Binding IsZoomed, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="{Binding ZoomText}" FontSize="12"
+                                   Foreground="{DynamicResource AccentBrush}" />
+                    </Border>
+                    <Button Content="移动字幕" Padding="10,5" Margin="0,0,12,0"
+                            Command="{Binding ToggleOverlayMoveCommand}"
+                            ToolTip="解锁后可以直接拖动桌面字幕摆位（Ctrl+Alt+M）" />
+                    <CheckBox Content="桌面字幕" IsChecked="{Binding Overlay.IsVisible}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- ==================== 主体 ==================== -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="310" MinWidth="220" MaxWidth="440" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" MinWidth="420" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ===== 左侧：继续收听 + 章节 ===== -->
+            <Border Grid.Column="0" Background="{DynamicResource PanelBackgroundBrush}"
+                    BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="0,0,1,0"
+                    Padding="14,14,14,12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBox Grid.Row="0" Text="{Binding LibraryFilter, UpdateSourceTrigger=PropertyChanged, Delay=150}"
+                             ToolTip="按书名 / 章节名过滤" />
+
+                    <Border Grid.Row="1" Margin="0,12,0,0" Padding="10" CornerRadius="8"
+                            Background="{DynamicResource InsetBackgroundBrush}"
+                            Visibility="{Binding HasContinue, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel>
+                            <TextBlock Text="继续收听" FontSize="11" Foreground="{DynamicResource GoldBrush}" />
+                            <TextBlock Text="{Binding ContinueBookTitle}" Margin="0,6,0,0" FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding ContinueChapterTitle}" FontSize="11" Margin="0,3,0,0"
+                                       TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextMutedBrush}" />
+                            <TextBlock Text="{Binding ContinueDetail}" FontSize="11" Margin="0,3,0,6"
+                                       Foreground="{DynamicResource TextMutedBrush}" />
+                            <Button Content="接着听" Padding="10,5" HorizontalAlignment="Left"
+                                    Style="{StaticResource PrimaryButtonStyle}"
+                                    Command="{Binding ContinueCommand}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Grid Grid.Row="2" Margin="0,12,0,4">
+                        <TextBlock Text="章节" Style="{StaticResource SectionTitleStyle}" VerticalAlignment="Center" Margin="0" />
+                        <TextBlock Text="{Binding ChapterListLabel}" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                   Foreground="{DynamicResource TextMutedBrush}" FontSize="11" />
+                    </Grid>
+
+                    <!-- 字幕语言：主字幕 + 副字幕（双语） -->
+                    <Grid Grid.Row="3" Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="8" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="悬浮字幕 · 主语言" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,4" />
+                            <ComboBox ItemsSource="{Binding AvailableTracks}"
+                                      DisplayMemberPath="DisplayName"
+                                      SelectedItem="{Binding PrimaryTrack, Mode=TwoWay}"
+                                      ToolTip="桌面悬浮字幕显示哪种语言（和阅读模式互不影响）" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="悬浮字幕 · 对照语言" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,4" />
+                            <ComboBox ItemsSource="{Binding SecondaryOptions}"
+                                      DisplayMemberPath="DisplayName"
+                                      SelectedItem="{Binding SecondarySelection, Mode=TwoWay}"
+                                      ToolTip="选一种语言就会在悬浮字幕下面再显示一行；主副同语言时会自动不显示" />
+                        </StackPanel>
+                    </Grid>
+                    <ListBox Grid.Row="4" ItemsSource="{Binding Chapters}"
+                             SelectedItem="{Binding SelectedEntry, Mode=TwoWay}"
+                             MouseDoubleClick="OnChapterDoubleClick"
+                             KeyboardNavigation.DirectionalNavigation="Contained">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid ToolTip="{Binding ToolTipText}">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <Grid Grid.Row="0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Grid.Column="1" Text="字幕" Margin="8,0,0,0" FontSize="11"
+                                                   VerticalAlignment="Center" Foreground="{DynamicResource GoldBrush}"
+                                                   Visibility="{Binding HasSubtitle, Converter={StaticResource BoolToVisibility}}" />
+                                    </Grid>
+
+                                    <Grid Grid.Row="1" Margin="0,6,0,0"
+                                          Visibility="{Binding HasProgress, Converter={StaticResource BoolToVisibility}}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <ProgressBar Grid.Column="0" Minimum="0" Maximum="1" VerticalAlignment="Center"
+                                                     Value="{Binding ProgressPercent, Mode=OneWay}" />
+                                        <TextBlock Grid.Column="1" Margin="8,0,0,0" FontSize="10"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   Text="{Binding ProgressText}" />
+                                    </Grid>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Grid.Row="4" Margin="4,10,4,0" VerticalAlignment="Top"
+                               Style="{StaticResource HintTextStyle}"
+                               Visibility="{Binding HasChapters, Converter={StaticResource InverseBoolToVisibility}}"
+                               Text="还没有章节。点下面的「选择媒体库文件夹」，程序会递归扫描子目录，按文件夹整理成书。" />
+
+                    <StackPanel Grid.Row="5" Margin="0,10,0,0">
+                        <Button Content="选择媒体库文件夹…" Padding="12,6" Margin="0,0,0,8"
+                                Style="{StaticResource PrimaryButtonStyle}"
+                                Command="{Binding ChooseFolderCommand}" />
+                        <Grid>
+                            <Button Content="刷新" Padding="10,5" HorizontalAlignment="Left"
+                                    Command="{Binding RefreshLibraryCommand}" />
+                            <CheckBox Content="自动连播" HorizontalAlignment="Right" VerticalAlignment="Center"
+                                      IsChecked="{Binding AutoContinue}" />
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <GridSplitter Grid.Column="1" Width="1" Background="{DynamicResource BorderSoftBrush}"
+                          HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+
+            <!-- ===== 中间：四种模式 ===== -->
+            <Grid Grid.Column="2">
+
+                <!-- ===== 书库 ===== -->
+                <Grid Visibility="{Binding IsLibraryMode, Converter={StaticResource BoolToVisibility}}">
+                    <Grid.LayoutTransform>
+                        <ScaleTransform ScaleX="{Binding LibraryZoom}" ScaleY="{Binding LibraryZoom}" />
+                    </Grid.LayoutTransform>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!--
+                        注意：书卡列表这里不能再套一层 ScrollViewer。
+                        ListBox 自带滚动区，嵌套时它会先把滚轮事件吃掉，而自己又没有可滚的高度，
+                        结果就是"滚轮没反应、只能拖外面的滑块"。
+                    -->
+                    <StackPanel Grid.Row="0" Margin="24,20,24,14">
+                        <Grid>
+                            <TextBlock Text="我的书库" FontSize="20" FontWeight="SemiBold" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                                <CheckBox Content="只看收藏" IsChecked="{Binding ShowOnlyFavorites}" Margin="0,0,14,0" />
+                                <TextBlock Text="{Binding VisibilityStats}" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextMutedBrush}" FontSize="12" />
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,6,0,18"
+                                   Text="{Binding LibraryRootDisplay}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+
+                    </StackPanel>
+
+                    <ListBox Grid.Row="1" Margin="24,0,24,16" Padding="0,0,8,0"
+                                 ItemsSource="{Binding BooksView}"
+                                 SelectedItem="{Binding SelectedBook, Mode=TwoWay}"
+                                 ItemContainerStyle="{StaticResource BookCardItemStyle}"
+                                 Background="Transparent"
+                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 MouseDoubleClick="OnBookDoubleClick"
+                                 KeyboardNavigation.DirectionalNavigation="Contained">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel />
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Width="176" ToolTip="{Binding ToolTipText}">
+                                        <Grid Height="212" ClipToBounds="True">
+                                            <Border CornerRadius="6" BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1">
+                                                <Border.Background>
+                                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                                        <GradientStop Color="#FF2A2322" Offset="0" />
+                                                        <GradientStop Color="#FF171314" Offset="1" />
+                                                    </LinearGradientBrush>
+                                                </Border.Background>
+                                                <TextBlock Text="{Binding Title}" TextWrapping="Wrap" Margin="14"
+                                                           VerticalAlignment="Center" TextAlignment="Center"
+                                                           FontSize="15" Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </Border>
+                                            <Border CornerRadius="6" ClipToBounds="True">
+                                                <Image Source="{Binding CoverPath, Converter={StaticResource CoverImage}}"
+                                                       Stretch="UniformToFill" />
+                                            </Border>
+                                            <Button Margin="0,6,6,0"
+                                                    HorizontalAlignment="Left" VerticalAlignment="Top"
+                                                    Content="🖼"
+                                                    FontSize="13"
+                                                    ToolTip="换封面 / 恢复自动封面"
+                                                    Click="OnCoverButtonClick" />
+
+                                            <Button Margin="0,6,6,0"
+                                                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                    Content="{Binding FavoriteGlyph}"
+                                                    ToolTip="收藏 / 取消收藏"
+                                                    Command="{Binding DataContext.ToggleFavoriteCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding FolderPath}">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource IconButtonStyle}">
+                                                        <Setter Property="Background" Value="#99000000" />
+                                                        <Setter Property="BorderBrush" Value="{DynamicResource BorderSoftBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                                                                <Setter Property="Foreground" Value="{DynamicResource GoldBrush}" />
+                                                                <Setter Property="BorderBrush" Value="{DynamicResource GoldBrush}" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                        </Grid>
+                                        <TextBlock Text="{Binding Title}" Margin="2,10,2,0" FontWeight="SemiBold"
+                                                   TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding CreditsText}" Margin="2,3,2,0" FontSize="11"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                                   Visibility="{Binding HasCredits, Converter={StaticResource BoolToVisibility}}" />
+                                        <ProgressBar Minimum="0" Maximum="1" Margin="2,7,2,0" Height="3"
+                                                     Value="{Binding ProgressPercent, Mode=OneWay}"
+                                                     Visibility="{Binding HasProgress, Converter={StaticResource BoolToVisibility}}" />
+                                        <Grid Margin="2,6,2,0">
+                                            <TextBlock Text="{Binding ChapterCountText}" FontSize="11"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                            <TextBlock Text="{Binding ProgressText}" FontSize="11" HorizontalAlignment="Right"
+                                                       Foreground="{DynamicResource TextMutedBrush}" />
+                                        </Grid>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                    <TextBlock Grid.Row="1" Margin="26,4,26,0" VerticalAlignment="Top"
+                               Style="{StaticResource HintTextStyle}"
+                               Visibility="{Binding HasLibrary, Converter={StaticResource InverseBoolToVisibility}}"
+                               Text="还没有媒体库。点左下角「选择媒体库文件夹…」，程序会递归扫描所有子目录：每个文件夹算一本书，里面的音频按自然顺序排成章节，并自动配对同名 .srt 字幕。" />
+                </Grid>
+
+                <!-- ===== 播放 ===== -->
+                <Grid Visibility="{Binding IsPlayerMode, Converter={StaticResource BoolToVisibility}}">
+                    <Grid.LayoutTransform>
+                        <ScaleTransform ScaleX="{Binding PlayerZoom}" ScaleY="{Binding PlayerZoom}" />
+                    </Grid.LayoutTransform>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 文件内章节（m4b 的 chpl），点了直接跳过去 -->
+                    <Border Grid.Column="1" Width="260" Margin="0,20,20,20" Padding="12"
+                            Background="{DynamicResource CardBackgroundBrush}"
+                            BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
+                            CornerRadius="8"
+                            Visibility="{Binding HasEmbeddedChapters, Converter={StaticResource BoolToVisibility}}">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Text="文件内章节" Style="{StaticResource SectionTitleStyle}" Margin="4,0,0,8" />
+                            <ListBox Grid.Row="1" ItemsSource="{Binding EmbeddedChapters}"
+                                     SelectedItem="{Binding CurrentEmbeddedChapter, Mode=OneWay}"
+                                     Background="Transparent" BorderThickness="0">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Grid.Column="1" Margin="8,0,0,0" FontSize="10"
+                                                       FontFamily="Consolas, Microsoft YaHei UI"
+                                                       Foreground="{DynamicResource TextMutedBrush}"
+                                                       Text="{Binding Start, StringFormat={}{0:hh\\:mm\\:ss}}" />
+                                        </Grid>
+
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="620" Margin="24">
+                        <Grid Height="300" Width="212" HorizontalAlignment="Center" ClipToBounds="True">
+                            <Border CornerRadius="8" BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                        <GradientStop Color="#FF2E2624" Offset="0" />
+                                        <GradientStop Color="#FF161213" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <StackPanel VerticalAlignment="Center" Margin="20">
+                                    <TextBlock Text="{Binding CurrentBookTitle}" TextWrapping="Wrap" TextAlignment="Center"
+                                               FontSize="19" FontWeight="SemiBold" />
+                                    <Border Height="1" Margin="18,14" Background="{DynamicResource GoldBrush}" Opacity="0.5" />
+                                    <TextBlock Text="{Binding ChapterProgressText}" TextAlignment="Center" FontSize="12"
+                                               Foreground="{DynamicResource TextMutedBrush}" />
+                                </StackPanel>
+                            </Border>
+                            <Border CornerRadius="8" ClipToBounds="True">
+                                <Image Source="{Binding SelectedBook.CoverPath, Converter={StaticResource CoverImage}}"
+                                       Stretch="UniformToFill" />
+                            </Border>
+                        </Grid>
+
+                        <TextBlock Text="{Binding CurrentBookTitle}" Margin="0,22,0,0" FontSize="23" FontWeight="SemiBold"
+                                   TextAlignment="Center" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding SelectedBook.CreditsText}" Margin="0,7,0,0" FontSize="13"
+                                   TextAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   Visibility="{Binding SelectedBook.HasCredits, Converter={StaticResource BoolToVisibility}}" />
+                        <TextBlock Text="{Binding CurrentChapterTitle}" Margin="0,6,0,0" FontSize="14"
+                                   TextAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource TextSecondaryBrush}" />
+                        <TextBlock Text="{Binding CurrentEmbeddedChapterTitle}" Margin="0,4,0,0" FontSize="12"
+                                   TextAlignment="Center" TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource GoldBrush}"
+                                   Visibility="{Binding HasEmbeddedChapters, Converter={StaticResource BoolToVisibility}}" />
+
+                        <Border Background="{DynamicResource InsetBackgroundBrush}" CornerRadius="8"
+                                Padding="20,16" Margin="0,26,0,0" MinHeight="96">
+                            <TextBlock Text="{Binding Overlay.Text}" TextWrapping="Wrap" TextAlignment="Center"
+                                       FontSize="19" LineHeight="34" VerticalAlignment="Center" />
+                        </Border>
+                    </StackPanel>
+                </Grid>
+
+                <!-- ===== 阅读 ===== -->
+                <Grid Visibility="{Binding IsReadingMode, Converter={StaticResource BoolToVisibility}}">
+                    <Grid.LayoutTransform>
+                        <ScaleTransform ScaleX="{Binding ReadingZoom}" ScaleY="{Binding ReadingZoom}" />
+                    </Grid.LayoutTransform>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Padding="28,20,28,10">
+                        <StackPanel>
+                            <TextBlock Text="{Binding CurrentChapterTitle}" FontSize="15" FontWeight="SemiBold" />
+                            <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,5,0,0"
+                                       Text="点任意一行可以跳到那句话；播放时会自动高亮并滚动。" />
+
+                            <!-- 阅读的语言和悬浮字幕是分开的，可以各选各的 -->
+                            <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                <TextBlock Text="阅读语言" VerticalAlignment="Center" FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,6,0" />
+                                <ComboBox Width="150" ItemsSource="{Binding AvailableTracks}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedItem="{Binding ReadingTrack, Mode=TwoWay}"
+                                          ToolTip="阅读模式显示哪种语言（和悬浮字幕互不影响）" />
+
+                                <TextBlock Text="对照语言" VerticalAlignment="Center" FontSize="12"
+                                           Foreground="{DynamicResource TextMutedBrush}" Margin="16,0,6,0" />
+                                <ComboBox Width="150" ItemsSource="{Binding ReadingOptions}"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedItem="{Binding ReadingSecondarySelection, Mode=TwoWay}"
+                                          ToolTip="再显示一种语言做对照；同语言时自动不显示" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <ListBox x:Name="ReadingList" Grid.Row="1" Margin="16,0,16,16" Padding="8,4"
+                             Background="{DynamicResource InsetBackgroundBrush}"
+                             ItemContainerStyle="{StaticResource ReadingLineItemStyle}"
+                             ItemsSource="{Binding ReadingLines}"
+                             SelectedItem="{Binding SelectedReadingLine, Mode=TwoWay}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="OnReadingSelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="64" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="{Binding TimeText}" FontSize="11"
+                                               FontFamily="Consolas, Microsoft YaHei UI"
+                                               VerticalAlignment="Top" Margin="0,4,10,0"
+                                               Foreground="{DynamicResource TextMutedBrush}" />
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap"
+                                                   FontSize="16" LineHeight="30">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+                                                            <Setter Property="FontWeight" Value="Medium" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+
+                                        <!-- 阅读双语：对照语言的同一句 -->
+                                        <TextBlock Text="{Binding SecondaryText}" TextWrapping="Wrap"
+                                                   FontSize="13" LineHeight="24" Margin="0,2,0,4"
+                                                   Opacity="0.75"
+                                                   Foreground="{DynamicResource TextMutedBrush}"
+                                                   Visibility="{Binding HasSecondaryText, Converter={StaticResource BoolToVisibility}}" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <TextBlock Grid.Row="1" Margin="48,30,48,0" VerticalAlignment="Top"
+                               Style="{StaticResource HintTextStyle}"
+                               Visibility="{Binding HasReadingLines, Converter={StaticResource InverseBoolToVisibility}}"
+                               Text="这一章没有字幕。给音频配一个同名 .srt 文件，就能在这里逐句跟随朗读。" />
+                </Grid>
+
+                <!-- ===== 设置 ===== -->
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="28,22,28,28"
+                              Visibility="{Binding IsSettingsMode, Converter={StaticResource BoolToVisibility}}">
+                    <StackPanel MaxWidth="720" HorizontalAlignment="Left">
+
+                        <Border Style="{StaticResource CardBorderStyle}">
+                            <StackPanel>
+                                <TextBlock Text="媒体库" Style="{StaticResource SettingsSectionStyle}" />
+                                <TextBlock Text="{Binding LibraryRootDisplay}" Style="{StaticResource EllipsisTextStyle}"
+                                           TextWrapping="NoWrap" />
+                                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                                    <Button Content="选择媒体库文件夹…" Padding="12,6" Margin="0,0,8,0"
+                                            Style="{StaticResource PrimaryButtonStyle}"
+                                            Command="{Binding ChooseFolderCommand}" />
+                                    <Button Content="重新扫描" Padding="12,6" Command="{Binding RefreshLibraryCommand}" />
+                                </StackPanel>
+                                <CheckBox Content="只显示带字幕的章节" Margin="0,14,0,0" IsChecked="{Binding ShowOnlyWithSubtitle}" />
+                                <CheckBox Content="只看收藏的书" Margin="0,10,0,0" IsChecked="{Binding ShowOnlyFavorites}" />
+                                <CheckBox Content="播完自动播下一章" Margin="0,10,0,0" IsChecked="{Binding AutoContinue}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="播放与记忆" Style="{StaticResource SettingsSectionStyle}" />
+
+                                <Grid>
+                                    <TextBlock Text="快进 / 快退步长" Style="{StaticResource SettingsLabelStyle}" />
+                                    <TextBlock HorizontalAlignment="Right" Style="{StaticResource ValueTextStyle}"
+                                               Text="{Binding SkipSeconds, StringFormat={}{0:0} 秒}" />
+                                </Grid>
+                                <Slider Minimum="5" Maximum="120" Margin="0,8,0,14" Value="{Binding SkipSeconds}" />
+
+
+                                <Grid>
+                                    <TextBlock Text="音量" Style="{StaticResource SettingsLabelStyle}" />
+                                    <TextBlock HorizontalAlignment="Right" Style="{StaticResource ValueTextStyle}"
+                                               Text="{Binding Volume, StringFormat={}{0:P0}}" />
+                                </Grid>
+                                <Slider Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.1" Margin="0,8,0,14" Value="{Binding Volume}" />
+
+                                <CheckBox Content="记住每个章节听到哪儿（下次自动接着播）"
+                                          IsChecked="{Binding RememberPlaybackPosition}" />
+                                <CheckBox Content="启动时自动恢复上次听的那一章" Margin="0,10,0,0"
+                                          IsChecked="{Binding ResumeLastOnStartup}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="字幕外观" Style="{StaticResource SettingsSectionStyle}" />
+
+                                <TextBlock Text="字体" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,6" />
+                                <ComboBox IsEditable="True" Margin="0,0,0,14"
+                                          ItemsSource="{Binding Overlay.FontChoices}"
+                                          Text="{Binding Overlay.FontFamilyName, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Text="字重" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,6" />
+                                <ComboBox Margin="0,0,0,14"
+                                          ItemsSource="{Binding Overlay.FontWeightChoices}"
+                                          DisplayMemberPath="Value" SelectedValuePath="Key"
+                                          SelectedValue="{Binding Overlay.FontWeightName, Mode=TwoWay}"
+                                          ToolTip="字幕在跑的时候也能从字幕工具条的 🎨 里直接改" />
+
+                                <Grid Margin="0,0,0,8">
+                                    <TextBlock Text="字号" Style="{StaticResource SettingsLabelStyle}" />
+                                    <TextBlock HorizontalAlignment="Right" Style="{StaticResource ValueTextStyle}"
+                                               Text="{Binding Overlay.FontSize, StringFormat={}{0:0}}" />
+                                </Grid>
+                                <Slider Minimum="12" Maximum="120" Margin="0,0,0,14" Value="{Binding Overlay.FontSize}" />
+
+                                <Grid Margin="0,0,0,8">
+                                    <TextBlock Text="描边粗细" Style="{StaticResource SettingsLabelStyle}" />
+                                    <TextBlock HorizontalAlignment="Right" Style="{StaticResource ValueTextStyle}"
+                                               Text="{Binding Overlay.OutlineThickness, StringFormat={}{0:0.0}}" />
+                                </Grid>
+                                <Slider Minimum="0" Maximum="10" Margin="0,0,0,16" Value="{Binding Overlay.OutlineThickness}" />
+
+                                <TextBlock Text="字色" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
+                                <ItemsControl ItemsSource="{Binding Overlay.ForegroundColorChoices}" Margin="0,0,0,8">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
+                                                    Tag="{Binding}" Click="OnForegroundSwatchClick" ToolTip="{Binding}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBox Text="{Binding Overlay.ForegroundHex, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,16" />
+
+                                <TextBlock Text="描边色" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
+                                <ItemsControl ItemsSource="{Binding Overlay.OutlineColorChoices}" Margin="0,0,0,8">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
+                                                    Tag="{Binding}" Click="OnOutlineSwatchClick" ToolTip="{Binding}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0" Text="{Binding Overlay.OutlineHex, UpdateSourceTrigger=LostFocus}" />
+                                    <Button Grid.Column="1" Content="恢复默认外观" Padding="10,5" Margin="10,0,0,0"
+                                            Command="{Binding ResetAppearanceCommand}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="桌面字幕窗口" Style="{StaticResource SettingsSectionStyle}" />
+                                <CheckBox Content="显示悬浮字幕窗口" IsChecked="{Binding Overlay.IsVisible}" />
+                                <CheckBox Content="点关闭时收进托盘（字幕和热键继续工作，从托盘菜单退出）" Margin="0,10,0,0"
+                                          IsChecked="{Binding MinimizeToTray}" />
+                                <CheckBox Content="显示字幕工具条（解锁拖动 / 字号 / 颜色 / 播放）" Margin="0,10,0,0"
+                                          IsChecked="{Binding Overlay.ShowHandle}" />
+                                <CheckBox Content="工具条平时自动隐藏，鼠标移到字幕上才浮出来（像网易云那样）" Margin="0,10,0,0"
+                                          IsChecked="{Binding Overlay.AutoHideToolbar}" />
+
+                                <TextBlock Text="位置" Style="{StaticResource SettingsLabelStyle}" Margin="0,14,0,6" />
+                                <ComboBox SelectedValuePath="Tag" Margin="0,0,0,12" HorizontalAlignment="Left" MinWidth="160"
+                                          SelectedValue="{Binding Overlay.Anchor, Mode=TwoWay}">
+                                    <ComboBoxItem Content="底部居中" Tag="{x:Static vm:OverlayAnchor.Bottom}" />
+                                    <ComboBoxItem Content="屏幕居中" Tag="{x:Static vm:OverlayAnchor.Center}" />
+                                    <ComboBoxItem Content="顶部居中" Tag="{x:Static vm:OverlayAnchor.Top}" />
+                                </ComboBox>
+
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="10" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="水平偏移" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,4" />
+                                        <TextBox Text="{Binding Overlay.OffsetX, UpdateSourceTrigger=LostFocus}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="垂直偏移" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,4" />
+                                        <TextBox Text="{Binding Overlay.OffsetY, UpdateSourceTrigger=LostFocus}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="4">
+                                        <TextBlock Text="宽" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,4" />
+                                        <TextBox Text="{Binding Overlay.OverlayWidth, UpdateSourceTrigger=LostFocus}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="6">
+                                        <TextBlock Text="高" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,4" />
+                                        <TextBox Text="{Binding Overlay.OverlayHeight, UpdateSourceTrigger=LostFocus}" />
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,0,0,10"
+                                           Text="也可以解锁后直接拖字幕的右下 / 左下角改大小，滚轮调字号。" />
+
+                                <Button Content="重置位置" Padding="10,5" HorizontalAlignment="Left"
+                                        Command="{Binding ResetPlacementCommand}" />
+                                <TextBlock Margin="0,10,0,0" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap"
+                                           Text="{Binding Overlay.ColorParseError}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="数据与存储" Style="{StaticResource SettingsSectionStyle}" />
+                                <TextBlock Text="{Binding StorageSummary}" Style="{StaticResource HintTextStyle}" Margin="0,0,0,12" />
+
+                                <TextBlock Text="数据目录（可用环境变量 AUDIOBOOKPLAYER_DATA_DIR 改到别处，做便携模式）"
+                                           FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                                <TextBlock Text="{Binding DataDirectory}" Style="{StaticResource EllipsisTextStyle}"
+                                           TextWrapping="NoWrap" Margin="0,3,0,10" />
+
+                                <TextBlock Text="⚠ 设置写盘失败（改的东西重启后会丢）：" Foreground="{DynamicResource DangerBrush}"
+                                           TextWrapping="Wrap" Margin="0,0,0,4"
+                                           Visibility="{Binding HasSettingsSaveError, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="{Binding SettingsSaveErrorText}" Foreground="{DynamicResource DangerBrush}"
+                                           TextWrapping="Wrap" Margin="0,0,0,10"
+                                           Visibility="{Binding HasSettingsSaveError, Converter={StaticResource BoolToVisibility}}" />
+
+                                <TextBlock Text="设置文件" FontSize="11" Foreground="{DynamicResource TextMutedBrush}" />
+                                <TextBlock Text="{Binding SettingsFilePath}" Style="{StaticResource EllipsisTextStyle}"
+                                           TextWrapping="NoWrap" Margin="0,3,0,10" />
+                                <TextBlock Text="播放数据（听到哪儿 / 最近播放 / 收藏）" FontSize="11"
+                                           Foreground="{DynamicResource TextMutedBrush}" />
+                                <TextBlock Text="{Binding PlaybackFilePath}" Style="{StaticResource EllipsisTextStyle}"
+                                           TextWrapping="NoWrap" Margin="0,3,0,14" />
+
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="打开数据目录" Padding="12,6" Margin="0,0,8,0"
+                                            Command="{Binding OpenDataFolderCommand}" />
+                                    <Button Content="清空播放记录" Padding="12,6" Margin="0,0,8,0"
+                                            Command="{Binding ClearPlaybackDataCommand}" />
+                                    <Button Content="恢复默认设置" Padding="12,6"
+                                            Command="{Binding ResetAllSettingsCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="配色方案" Style="{StaticResource SettingsSectionStyle}" />
+
+                                <TextBlock Text="预设" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,6" />
+                                <ComboBox ItemsSource="{Binding ThemePresets}" DisplayMemberPath="PresetName"
+                                          SelectedItem="{Binding SelectedThemePreset, Mode=OneWay}"
+                                          SelectionChanged="OnThemePresetChanged" Margin="0,0,0,16" />
+
+                                <TextBlock Text="背景色" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
+                                <ItemsControl ItemsSource="{Binding ThemeBackgroundChoices}" Margin="0,0,0,8">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
+                                                    Tag="{Binding}" Click="OnThemeSwatchClick" ToolTip="{Binding}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBox Text="{Binding ThemeBackground, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,14" />
+
+                                <TextBlock Text="强调色（按钮 / 进度 / 选中态）" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
+                                <ItemsControl ItemsSource="{Binding ThemeAccentChoices}" Margin="0,0,0,8">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
+                                                    Tag="{Binding}" Click="OnThemeSwatchClick" ToolTip="{Binding}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBox Text="{Binding ThemeAccent, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,14" />
+
+                                <TextBlock Text="金色点缀（当前章节 / 字幕角标）" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
+                                <ItemsControl ItemsSource="{Binding ThemeGoldChoices}" Margin="0,0,0,8">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
+                                                    Tag="{Binding}" Click="OnThemeSwatchClick" ToolTip="{Binding}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBox Text="{Binding ThemeGold, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,14" />
+
+                                <TextBlock Text="文字色" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
+                                <TextBox Text="{Binding ThemeForeground, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,14" />
+
+                                <Button Content="恢复默认配色" Padding="10,5" HorizontalAlignment="Left"
+                                        Command="{Binding ResetThemeCommand}" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="全局热键" Style="{StaticResource SettingsSectionStyle}" />
+                                <TextBlock Text="不在前台也能控制播放（字幕窗口保持鼠标穿透，所以不会挡住你正在用的软件）。"
+                                           Style="{StaticResource HintTextStyle}" Margin="0,0,0,10" />
+                                <CheckBox Content="启用全局热键" IsChecked="{Binding EnableGlobalHotkeys}" Margin="0,0,0,10" />
+                                <TextBlock Text="{Binding HotkeyStatusText}" Style="{StaticResource HintTextStyle}" Margin="0,0,0,10" />
+
+                                <ItemsControl ItemsSource="{Binding HotkeyList}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,3">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0" MinWidth="150" Padding="8,3" CornerRadius="4"
+                                                        Background="{DynamicResource InsetBackgroundBrush}">
+                                                    <TextBlock Text="{Binding GestureText}" FontSize="12"
+                                                               FontFamily="Consolas, Microsoft YaHei UI" />
+                                                </Border>
+                                                <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center"
+                                                           Text="{Binding Description}"
+                                                           Foreground="{DynamicResource TextSecondaryBrush}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
+                            <StackPanel>
+                                <TextBlock Text="关于" Style="{StaticResource SettingsSectionStyle}" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <TextBlock Grid.Row="0" Grid.Column="0" Text="版本" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,16,6" />
+                                    <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding VersionText}" Margin="0,0,0,6" />
+
+                                    <TextBlock Grid.Row="1" Grid.Column="0" Text="运行时" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,16,6" />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding RuntimeText}" TextWrapping="Wrap" Margin="0,0,0,6" />
+
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Text="快捷键" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,16,6" />
+                                    <TextBlock Grid.Row="2" Grid.Column="1" TextWrapping="Wrap" Margin="0,0,0,6"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="空格 播放/暂停　←/→ 快退/快进　↑/↓ 字幕字号　Home 回到开头" />
+
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Text="桌面字幕" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,16,0" />
+                                    <TextBlock Grid.Row="3" Grid.Column="1" TextWrapping="Wrap"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               Text="悬浮字幕窗口全程鼠标穿透、不抢键盘焦点，可以直接在它上面点代码；点顶栏「移动字幕」可以解锁拖动摆位。" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+
+        <!-- ==================== 底部播放条 ==================== -->
+        <Border Grid.Row="2" Background="{DynamicResource PanelBackgroundBrush}"
+                BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="0,1,0,0"
+                Padding="18,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="240" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding CurrentBookTitle}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding CurrentChapterTitle}" FontSize="11" Margin="0,3,0,0"
+                               TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextMutedBrush}" />
+                </StackPanel>
+
+                <Grid Grid.Column="1" Margin="24,0,24,0" VerticalAlignment="Center">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Slider x:Name="PositionSlider" Grid.Row="0"
+                            Minimum="0"
+                            Maximum="{Binding DurationSeconds, Mode=OneWay}"
+                            Value="{Binding PositionSeconds, Mode=TwoWay}"
+                            IsEnabled="{Binding HasDuration}"
+                            IsMoveToPointEnabled="True"
+                            SmallChange="1" LargeChange="10"
+                            Thumb.DragStarted="OnSeekDragStarted"
+                            Thumb.DragCompleted="OnSeekDragCompleted" />
+                    <Grid Grid.Row="1" Margin="0,2,0,0">
+                        <TextBlock HorizontalAlignment="Left" Style="{StaticResource ValueTextStyle}"
+                                   FontSize="11" Text="{Binding PositionText, Mode=OneWay}" />
+                        <TextBlock HorizontalAlignment="Right" Style="{StaticResource ValueTextStyle}"
+                                   FontSize="11" Foreground="{DynamicResource TextMutedBrush}"
+                                   Text="{Binding DurationText, Mode=OneWay}" />
+                    </Grid>
+                </Grid>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="⏮" Padding="10,6" Margin="0,0,8,0" ToolTip="上一章"
+                            Command="{Binding PreviousChapterCommand}" />
+                    <Button Content="{Binding SkipBackLabel}" Padding="10,6" Margin="0,0,8,0"
+                            Command="{Binding SkipBackCommand}" />
+                    <Button Content="{Binding PlayPauseGlyph}" Padding="16,6" Margin="0,0,8,0" MinWidth="58"
+                            FontSize="15" Style="{StaticResource PrimaryButtonStyle}"
+                            Command="{Binding TogglePlayPauseCommand}" />
+                    <Button Content="{Binding SkipForwardLabel}" Padding="10,6" Margin="0,0,8,0"
+                            Command="{Binding SkipForwardCommand}" />
+                    <Button Content="⏭" Padding="10,6" Margin="0,0,8,0" ToolTip="下一章"
+                            Command="{Binding NextChapterCommand}" />
+                    <Button Content="停止" Padding="12,6" Margin="0,0,16,0" Command="{Binding StopCommand}" />
+                    <TextBlock Text="倍速" VerticalAlignment="Center" Margin="0,0,6,0"
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
+<TextBlock Text="音量" VerticalAlignment="Center" Margin="0,0,8,0"
+                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                    <Slider Width="96" Minimum="0" Maximum="1" SmallChange="0.05" LargeChange="0.1"
+                                        Value="{Binding Volume}" VerticalAlignment="Center"
+                                        ToolTip="拖动或直接点轨道上的位置调整音量" />
+                    <TextBlock Text="已静音" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="12"
+                               Foreground="{DynamicResource DangerBrush}"
+                               Visibility="{Binding IsMuted, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -1,0 +1,56 @@
+# ==================== .NET ====================
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+*.pdb
+*.dll.config
+project.lock.json
+.vs/
+
+# ==================== IDE ====================
+.idea/
+.vscode/
+*.swp
+*~
+
+# ==================== 本项目运行时产物 ====================
+# 自检 / 截图等开发期产物
+selftest-*.json
+selftest-*.txt
+selftest-report.txt
+ui-snapshot-*.json
+ui-snapshot-*.png
+crash.log
+activity.log
+
+# 测试用的临时数据目录
+testdata/
+testlibrary/
+selftest-*/
+container-alias/
+
+# KATARU 给 .m4b 建的硬链接别名（临时文件，程序会自己删）
+.kataru-*.m4a
+
+# ==================== 其它 ====================
+*.log
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ==================== 本机 / 个人数据 ====================
+# WPF 构建时生成的临时工程文件
+*_wpftmp.csproj
+*.wpftmp.csproj
+
+# 翻译工作区（含小说原文，不适合公开）
+zh-work/

@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- 只为托盘图标（System.Windows.Forms.NotifyIcon），不引入任何第三方库 -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>AudioBookPlayer</RootNamespace>
+    <AssemblyName>KATARU</AssemblyName>
+    <!-- 保留原 GUID，AudioBookPlayer.sln 仍然可以直接打开 -->
+    <ProjectGuid>{D8AC201F-E291-43BE-93DD-B2318F0ED5B4}</ProjectGuid>
+    <Platforms>AnyCPU;x64</Platforms>
+    <!-- 产物固定为 x64（Release → Windows x64 → 可执行程序） -->
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyTitle>KATARU</AssemblyTitle>
+    <Product>KATARU</Product>
+    <Description>KATARU — 有声书播放器 + 桌面悬浮字幕（WPF + Win32）</Description>
+    <Version>0.5.0</Version>
+    <!-- 程序图标（tools\make-icon.ps1 生成，多尺寸 ICO） -->
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <!-- 第三方依赖：无。全部使用 WPF / BCL / Win32。 -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 测试素材跟随输出目录，方便自检与手动验收 -->
+    <None Update="samples\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 界面标题栏用的图标预览图（编进程序集资源）；.ico 只作为 exe 图标 -->
+    <None Remove="Assets\app-header.png" />
+    <Resource Include="Assets\app-header.png" />
+  </ItemGroup>
+
+</Project>
