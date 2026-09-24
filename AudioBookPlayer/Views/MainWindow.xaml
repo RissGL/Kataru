@@ -675,45 +675,11 @@
                                 </Grid>
                                 <Slider Minimum="0" Maximum="10" Margin="0,0,0,16" Value="{Binding Overlay.OutlineThickness}" />
 
-                                <TextBlock Text="字色" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
-                                <ItemsControl ItemsSource="{Binding Overlay.ForegroundColorChoices}" Margin="0,0,0,8">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
-                                                    Tag="{Binding}" Click="OnForegroundSwatchClick" ToolTip="{Binding}" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <TextBox Text="{Binding Overlay.ForegroundHex, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,16" />
-
-                                <TextBlock Text="描边色" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
-                                <ItemsControl ItemsSource="{Binding Overlay.OutlineColorChoices}" Margin="0,0,0,8">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
-                                                    Tag="{Binding}" Click="OnOutlineSwatchClick" ToolTip="{Binding}" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox Grid.Column="0" Text="{Binding Overlay.OutlineHex, UpdateSourceTrigger=LostFocus}" />
-                                    <Button Grid.Column="1" Content="恢复默认外观" Padding="10,5" Margin="10,0,0,0"
-                                            Command="{Binding ResetAppearanceCommand}" />
-                                </Grid>
+                                <!-- 字色 / 描边色：和配色方案共用同一个调色盘模板 -->
+                                <ItemsControl ItemsSource="{Binding Overlay.ColorSlots}"
+                                              ItemTemplate="{StaticResource ColorSlotTemplate}" Margin="0,0,0,14" />
+                                <Button Content="恢复默认外观" Padding="10,5" HorizontalAlignment="Left" Margin="0,4,0,0"
+                                        Command="{Binding ResetAppearanceCommand}" />
                             </StackPanel>
                         </Border>
 
@@ -822,48 +788,7 @@
                                 <ItemsControl ItemsSource="{Binding ThemeSlots}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Grid Margin="0,0,0,14">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto" />
-                                                    <ColumnDefinition Width="*" />
-                                                </Grid.ColumnDefinitions>
-
-                                                <!-- 大色块：点一下弹出调色盘 -->
-                                                <ToggleButton x:Name="SwatchToggle" Grid.Column="0" Width="96" Height="34"
-                                                              Cursor="Hand" Background="{Binding Brush}"
-                                                              ToolTip="点一下打开调色盘">
-                                                    <ToggleButton.Template>
-                                                        <ControlTemplate TargetType="ToggleButton">
-                                                            <Border CornerRadius="7" Background="{TemplateBinding Background}"
-                                                                    BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
-                                                                <TextBlock Text="{Binding Hex}" FontSize="11" FontWeight="SemiBold"
-                                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                                           Foreground="{Binding LabelBrush}" />
-                                                            </Border>
-                                                        </ControlTemplate>
-                                                    </ToggleButton.Template>
-                                                </ToggleButton>
-
-                                                <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Title}" Style="{StaticResource SettingsLabelStyle}" />
-                                                    <TextBlock Text="{Binding Description}" Style="{StaticResource HintTextStyle}" Margin="0,2,0,0" />
-                                                </StackPanel>
-
-                                                <!-- 临时调色窗口：StaysOpen=False → 点别处自动关 -->
-                                                <Popup Grid.Column="0" PlacementTarget="{Binding ElementName=SwatchToggle}"
-                                                       Placement="Bottom" VerticalOffset="6" HorizontalOffset="0"
-                                                       StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade"
-                                                       IsOpen="{Binding IsChecked, ElementName=SwatchToggle, Mode=TwoWay}">
-                                                    <Border Background="{DynamicResource PanelBackgroundBrush}"
-                                                            BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1"
-                                                            CornerRadius="10" Padding="12">
-                                                        <Border.Effect>
-                                                            <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.55" />
-                                                        </Border.Effect>
-                                                        <controls:ColorPickerPanel Color="{Binding Color, Mode=TwoWay}" />
-                                                    </Border>
-                                                </Popup>
-                                            </Grid>
+                                            <ContentPresenter Content="{Binding}" ContentTemplate="{StaticResource ColorSlotTemplate}" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>

@@ -487,6 +487,39 @@ namespace AudioBookPlayer.ViewModels
             "#FFFFFF", "#FFF3B0", "#FFE066", "#B3E5FC", "#C8E6C9", "#FFCDD2", "#000000",
         };
 
+        // ---------------- 字幕颜色（和配色方案共用同一套调色盘） ----------------
+
+        private System.Collections.ObjectModel.ObservableCollection<ThemeColorSlot>? _colorSlots;
+
+        /// <summary>字幕的颜色槽：字色、描边色。</summary>
+        public System.Collections.ObjectModel.ObservableCollection<ThemeColorSlot> ColorSlots =>
+            _colorSlots ??= new System.Collections.ObjectModel.ObservableCollection<ThemeColorSlot>
+            {
+                new("foreground", "字色", "字幕文字本身的颜色", ForegroundHex, hex => ForegroundHex = hex),
+                new("outline", "描边色", "文字外面那圈轮廓，深色背景上建议用黑", OutlineHex, hex => OutlineHex = hex),
+            };
+
+        /// <summary>外部改了颜色（比如工具条上的 🎨）时，让调色盘同步显示。</summary>
+        public void SyncColorSlots()
+        {
+            if (_colorSlots == null)
+            {
+                return;
+            }
+
+            foreach (var slot in _colorSlots)
+            {
+                switch (slot.Key)
+                {
+                    case "foreground":
+                        slot.SyncFrom(ForegroundHex);
+                        break;
+                    case "outline":
+                        slot.SyncFrom(OutlineHex);
+                        break;
+                }
+            }
+        }
         // XAML 绑定不能走静态属性，这里提供实例访问器。
 
         public IReadOnlyList<string> ForegroundColorChoices => AvailableForegroundColors;

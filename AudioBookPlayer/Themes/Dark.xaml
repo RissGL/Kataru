@@ -1,6 +1,7 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                    xmlns:conv="clr-namespace:AudioBookPlayer.Converters">
+                    xmlns:conv="clr-namespace:AudioBookPlayer.Converters"
+                    xmlns:controls="clr-namespace:AudioBookPlayer.Controls">
 
     <!-- ==================== 转换器 ==================== -->
     <conv:BooleanToVisibilityConverter x:Key="BoolToVisibility" />
@@ -721,6 +722,53 @@
         <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
         <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
     </Style>
+    <!-- ==================== 颜色槽（配色方案 / 字幕颜色共用） ==================== -->
+    <!-- 大色块点开就是自绘调色盘（HSV 色板 + 色相带 + hex），点外面自动关 -->
+    <DataTemplate x:Key="ColorSlotTemplate">
+                                    <Grid Margin="0,0,0,14">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- 大色块：点一下弹出调色盘 -->
+                                        <ToggleButton x:Name="SwatchToggle" Grid.Column="0" Width="96" Height="34"
+                                                      Cursor="Hand" Background="{Binding Brush}"
+                                                      ToolTip="点一下打开调色盘">
+                                            <ToggleButton.Template>
+                                                <ControlTemplate TargetType="ToggleButton">
+                                                    <Border CornerRadius="7" Background="{TemplateBinding Background}"
+                                                            BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                                                        <TextBlock Text="{Binding Hex}" FontSize="11" FontWeight="SemiBold"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                   Foreground="{Binding LabelBrush}" />
+                                                    </Border>
+                                                </ControlTemplate>
+                                            </ToggleButton.Template>
+                                        </ToggleButton>
+
+                                        <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Title}" Style="{DynamicResource SettingsLabelStyle}" />
+                                            <TextBlock Text="{Binding Description}" Style="{DynamicResource HintTextStyle}" Margin="0,2,0,0" />
+                                        </StackPanel>
+
+                                        <!-- 临时调色窗口：StaysOpen=False → 点别处自动关 -->
+                                        <Popup Grid.Column="0" PlacementTarget="{Binding ElementName=SwatchToggle}"
+                                               Placement="Bottom" VerticalOffset="6" HorizontalOffset="0"
+                                               StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade"
+                                               IsOpen="{Binding IsChecked, ElementName=SwatchToggle, Mode=TwoWay}">
+                                            <Border Background="{DynamicResource PanelBackgroundBrush}"
+                                                    BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1"
+                                                    CornerRadius="10" Padding="12">
+                                                <Border.Effect>
+                                                    <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.55" />
+                                                </Border.Effect>
+                                                <controls:ColorPickerPanel Color="{Binding Color, Mode=TwoWay}" />
+                                            </Border>
+                                        </Popup>
+                                    </Grid>
+    </DataTemplate>
+
     <!-- ==================== 悬浮字幕的改大小把手 ==================== -->
     <Style x:Key="OverlayResizeThumbStyle" TargetType="Thumb">
         <Setter Property="Width" Value="22" />

@@ -297,6 +297,16 @@ namespace AudioBookPlayer.Diagnostics
             catch (Exception ex)
             {
                 Console.WriteLine("截图失败：" + ex);
+
+                // GUI 子系统的程序没有控制台，Console 输出看不到 —— 顺手写一份到文件，方便排查
+                try
+                {
+                    File.WriteAllText(output + ".error.txt", ex.ToString(), new System.Text.UTF8Encoding(true));
+                }
+                catch
+                {
+                    // 写不了就算了
+                }
                 return 1;
             }
             finally

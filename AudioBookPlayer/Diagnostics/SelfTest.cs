@@ -1234,6 +1234,50 @@ namespace AudioBookPlayer.Diagnostics
             {
                 Check("扩展字体文件夹", false, ex.Message);
             }
+            // ============ 10f. 字幕颜色槽（和配色方案共用调色盘） ============
+            Section("字幕颜色调色盘");
+
+            try
+            {
+                using var colorViewModel = new MainViewModel(
+                    settings: AppSettings.Load(Path.Combine(AppContext.BaseDirectory, "selftest-color.json")),
+                    playbackStore: PlaybackStore.Load(Path.Combine(AppContext.BaseDirectory, "selftest-color-playback.json")));
+
+                var slots = colorViewModel.Overlay.ColorSlots;
+
+                Check("字幕有两个颜色槽（字色 / 描边色）", slots.Count == 2,
+                    string.Join("、", slots.Select(s => s.Title)));
+
+                Check("颜色槽的 Hex 和 Color 能互相转换",
+                    slots.All(s => Math.Abs(s.Color.R - Convert.ToByte(s.Hex.Substring(1, 2), 16)) == 0),
+                    string.Join("、", slots.Select(s => $"{s.Title} {s.Hex}")));
+
+                var foregroundSlot = slots.First(s => s.Key == "foreground");
+                foregroundSlot.Hex = "#FFE066";
+
+                Check("改字色槽 → 字幕字色跟着变",
+                    colorViewModel.Overlay.ForegroundHex == "#FFE066",
+                    colorViewModel.Overlay.ForegroundHex);
+
+                Check("字幕画刷真的换了",
+                    (colorViewModel.Overlay.Foreground as System.Windows.Media.SolidColorBrush)?.Color.ToString() == "#FFFFE066",
+                    (colorViewModel.Overlay.Foreground as System.Windows.Media.SolidColorBrush)?.Color.ToString() ?? "(空)");
+
+                var outlineSlot = slots.First(s => s.Key == "outline");
+                outlineSlot.Hex = "#1A1A1A";
+                Check("改描边色槽 → 描边跟着变",
+                    colorViewModel.Overlay.OutlineHex == "#1A1A1A",
+                    colorViewModel.Overlay.OutlineHex);
+
+                // 外部改（比如工具条上的 🎨）时槽位要同步
+                colorViewModel.Overlay.ForegroundHex = "#B3E5FC";
+                colorViewModel.Overlay.SyncColorSlots();
+                Check("从别处改颜色后调色盘同步", foregroundSlot.Hex == "#B3E5FC", foregroundSlot.Hex);
+            }
+            catch (Exception ex)
+            {
+                Check("字幕颜色调色盘", false, ex.Message);
+            }
             // ============ 10e. 界面字体 ============
             Section("界面字体可换");
 
