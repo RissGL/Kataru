@@ -101,6 +101,10 @@ namespace AudioBookPlayer.Core
         /// <summary>首选副字幕语言代码（"__none__"=不显示副字幕）。</summary>
         public string PreferredSecondaryLanguage { get; set; } = "__none__";
 
+        /// <summary>界面字体（空 = 用内置默认）。</summary>
+        public string UiFontFamilyName { get; set; } = string.Empty;
+        /// <summary>扩展字体文件夹：把 .ttf / .otf 丢进去，重启后就能在字幕字体里选（留空则用数据目录下的 fonts）。</summary>
+        public string ExtraFontsFolder { get; set; } = string.Empty;
         /// <summary>字重名（Light / Normal / Medium / SemiBold / Bold / Black）。</summary>
         public string FontWeightName { get; set; } = "Normal";
 

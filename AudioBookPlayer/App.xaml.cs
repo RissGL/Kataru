@@ -197,6 +197,15 @@ namespace AudioBookPlayer
             });
             Diagnostics.ActivityLog.StartWatchdog(
                 System.IO.Path.Combine(Core.AppPaths.DataDirectory, "activity.log"));
+            // 扩展字体文件夹：放进去的 .ttf / .otf 直接进字幕字体列表（后台扫，不挡启动）
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                var added = _viewModel.Overlay.ScanExtraFonts();
+                if (added > 0)
+                {
+                    Diagnostics.ActivityLog.Note($"扩展字体文件夹里加载了 {added} 个字体");
+                }
+            });
             _viewModel.Start();
             _viewModel.LoadFromCommandLine(args);
 

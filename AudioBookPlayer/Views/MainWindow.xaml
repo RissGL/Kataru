@@ -1,6 +1,7 @@
 <Window x:Class="AudioBookPlayer.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:AudioBookPlayer.Controls"
         xmlns:vm="clr-namespace:AudioBookPlayer.ViewModels"
         Title="KATARU"
         Width="1240" Height="840"
@@ -614,10 +615,44 @@
                             <StackPanel>
                                 <TextBlock Text="字幕外观" Style="{StaticResource SettingsSectionStyle}" />
 
-                                <TextBlock Text="字体" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,6" />
-                                <ComboBox IsEditable="True" Margin="0,0,0,14"
+                                <TextBlock Text="界面字体" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,6" />
+                                <Grid Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="UiFontBox" Grid.Column="0" IsEditable="True"
+                                              ItemsSource="{Binding Overlay.FontChoices}"
+                                              Text="{Binding UiFontDisplay, UpdateSourceTrigger=LostFocus}"
+                                              SelectionChanged="OnUiFontSelectionChanged"
+                                              ToolTip="整个界面的字体（列表、按钮、菜单…）。留空则用默认；扩展字体文件夹里的字体也能选" />
+                                    <Button Grid.Column="1" Content="恢复默认" Padding="10,4" Margin="8,0,0,0"
+                                            Click="OnResetUiFontClick"
+                                            ToolTip="回到内置默认字体" />
+                                </Grid>
+                                <TextBlock Text="字体" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,6" />                                <!-- 扩展字体：不用装到系统里，丢进文件夹就能选 -->
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox Grid.Column="0" IsReadOnly="True"
+                                             Text="{Binding Overlay.EffectiveFontsFolder, Mode=OneWay}"
+                                             ToolTip="把 .ttf / .otf 丢进这个文件夹，点右边『重新扫描』就能在字体列表里选到"
+                                             Foreground="{DynamicResource TextSecondaryBrush}" />
+                                    <Button Grid.Column="1" Content="选择…" Padding="10,4" Margin="8,0,0,0"
+                                            Click="OnPickFontsFolderClick" />
+                                    <Button Grid.Column="2" Content="重新扫描" Padding="10,4" Margin="8,0,0,0"
+                                            Click="OnRescanFontsClick"
+                                            ToolTip="丢进新字体后点这里，不用重启" />
+                                </Grid>
+                                <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,0,0,12"
+                                           Text="扩展字体文件夹：把下载的 .ttf / .otf 丢进去，点『重新扫描』即可在字幕字体里选到；换电脑时整个文件夹拷过去就行。" />
+                                <ComboBox x:Name="SubtitleFontBox" IsEditable="True" Margin="0,0,0,14"
                                           ItemsSource="{Binding Overlay.FontChoices}"
-                                          Text="{Binding Overlay.FontFamilyName, UpdateSourceTrigger=PropertyChanged}" />
+                                          Text="{Binding Overlay.FontFamilyName, UpdateSourceTrigger=PropertyChanged}"
+                                          SelectionChanged="OnSubtitleFontSelectionChanged" />
 
                                 <TextBlock Text="字重" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,6" />
                                 <ComboBox Margin="0,0,0,14"
@@ -778,64 +813,62 @@
                         <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
                             <StackPanel>
                                 <TextBlock Text="配色方案" Style="{StaticResource SettingsSectionStyle}" />
-
                                 <TextBlock Text="预设" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,6" />
                                 <ComboBox ItemsSource="{Binding ThemePresets}" DisplayMemberPath="PresetName"
                                           SelectedItem="{Binding SelectedThemePreset, Mode=OneWay}"
                                           SelectionChanged="OnThemePresetChanged" Margin="0,0,0,16" />
 
-                                <TextBlock Text="背景色" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
-                                <ItemsControl ItemsSource="{Binding ThemeBackgroundChoices}" Margin="0,0,0,8">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
+                                <!-- 四组颜色：点大色块弹出临时调色盘（点外面自动关闭） -->
+                                <ItemsControl ItemsSource="{Binding ThemeSlots}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
-                                                    Tag="{Binding}" Click="OnThemeSwatchClick" ToolTip="{Binding}" />
+                                            <Grid Margin="0,0,0,14">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <!-- 大色块：点一下弹出调色盘 -->
+                                                <ToggleButton x:Name="SwatchToggle" Grid.Column="0" Width="96" Height="34"
+                                                              Cursor="Hand" Background="{Binding Brush}"
+                                                              ToolTip="点一下打开调色盘">
+                                                    <ToggleButton.Template>
+                                                        <ControlTemplate TargetType="ToggleButton">
+                                                            <Border CornerRadius="7" Background="{TemplateBinding Background}"
+                                                                    BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1">
+                                                                <TextBlock Text="{Binding Hex}" FontSize="11" FontWeight="SemiBold"
+                                                                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                                           Foreground="{Binding LabelBrush}" />
+                                                            </Border>
+                                                        </ControlTemplate>
+                                                    </ToggleButton.Template>
+                                                </ToggleButton>
+
+                                                <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Title}" Style="{StaticResource SettingsLabelStyle}" />
+                                                    <TextBlock Text="{Binding Description}" Style="{StaticResource HintTextStyle}" Margin="0,2,0,0" />
+                                                </StackPanel>
+
+                                                <!-- 临时调色窗口：StaysOpen=False → 点别处自动关 -->
+                                                <Popup Grid.Column="0" PlacementTarget="{Binding ElementName=SwatchToggle}"
+                                                       Placement="Bottom" VerticalOffset="6" HorizontalOffset="0"
+                                                       StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade"
+                                                       IsOpen="{Binding IsChecked, ElementName=SwatchToggle, Mode=TwoWay}">
+                                                    <Border Background="{DynamicResource PanelBackgroundBrush}"
+                                                            BorderBrush="{DynamicResource BorderStrongBrush}" BorderThickness="1"
+                                                            CornerRadius="10" Padding="12">
+                                                        <Border.Effect>
+                                                            <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.55" />
+                                                        </Border.Effect>
+                                                        <controls:ColorPickerPanel Color="{Binding Color, Mode=TwoWay}" />
+                                                    </Border>
+                                                </Popup>
+                                            </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
-                                <TextBox Text="{Binding ThemeBackground, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,14" />
 
-                                <TextBlock Text="强调色（按钮 / 进度 / 选中态）" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
-                                <ItemsControl ItemsSource="{Binding ThemeAccentChoices}" Margin="0,0,0,8">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
-                                                    Tag="{Binding}" Click="OnThemeSwatchClick" ToolTip="{Binding}" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <TextBox Text="{Binding ThemeAccent, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,14" />
-
-                                <TextBlock Text="金色点缀（当前章节 / 字幕角标）" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
-                                <ItemsControl ItemsSource="{Binding ThemeGoldChoices}" Margin="0,0,0,8">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <WrapPanel />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Button Style="{StaticResource SwatchButtonStyle}" Background="{Binding}"
-                                                    Tag="{Binding}" Click="OnThemeSwatchClick" ToolTip="{Binding}" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <TextBox Text="{Binding ThemeGold, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,14" />
-
-                                <TextBlock Text="文字色" Style="{StaticResource SettingsLabelStyle}" Margin="0,0,0,8" />
-                                <TextBox Text="{Binding ThemeForeground, UpdateSourceTrigger=LostFocus}" Margin="0,0,0,14" />
-
-                                <Button Content="恢复默认配色" Padding="10,5" HorizontalAlignment="Left"
+                                <Button Content="恢复默认配色" Padding="10,5" HorizontalAlignment="Left" Margin="0,4,0,0"
                                         Command="{Binding ResetThemeCommand}" />
                             </StackPanel>
                         </Border>

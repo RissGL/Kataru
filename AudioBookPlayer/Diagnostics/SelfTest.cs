@@ -10,6 +10,7 @@ using AudioBookPlayer.Audio;
 using AudioBookPlayer.Core;
 using AudioBookPlayer.ViewModels;
 using System.Linq;
+using System.Windows.Media;
 using AudioBookPlayer.Views;
 using AudioBookPlayer.Windows;
 
@@ -1104,6 +1105,174 @@ namespace AudioBookPlayer.Diagnostics
                 {
                     // 忽略
                 }
+            }
+            // ============ 10c. 配色调色盘 ============
+            Section("配色调色盘");
+
+            try
+            {
+                using var paletteViewModel = new MainViewModel(
+                    settings: AppSettings.Load(Path.Combine(AppContext.BaseDirectory, "selftest-palette.json")),
+                    playbackStore: PlaybackStore.Load(Path.Combine(AppContext.BaseDirectory, "selftest-palette-playback.json")));
+
+                Check("四个颜色槽齐全", paletteViewModel.ThemeSlots.Count == 4,
+                    string.Join("、", paletteViewModel.ThemeSlots.Select(s => s.Title)));
+
+                var accentSlot = paletteViewModel.ThemeSlots.First(s => s.Key == "accent");
+                accentSlot.Hex = "#3D8BD4";
+
+                Check("点调色盘 → 主题强调色跟着变",
+                    paletteViewModel.ThemeAccent.Equals("#3D8BD4", StringComparison.OrdinalIgnoreCase),
+                    paletteViewModel.ThemeAccent);
+
+                // 调色盘绑的是 Color（双向），必须和 Hex 互通
+                accentSlot.Color = System.Windows.Media.Color.FromRgb(0xC9, 0xA2, 0x27);
+                Check("调色盘改 Color → Hex 与主题一起变",
+                    accentSlot.Hex == "#C9A227" &&
+                    paletteViewModel.ThemeAccent.Equals("#C9A227", StringComparison.OrdinalIgnoreCase),
+                    $"{accentSlot.Hex} / {paletteViewModel.ThemeAccent}");
+
+                accentSlot.Hex = "#3D8BD4";
+                Check("反填 Hex → Color 也读得出来",
+                    accentSlot.Color == System.Windows.Media.Color.FromRgb(0x3D, 0x8B, 0xD4),
+                    accentSlot.Color.ToString());
+
+                Check("窗口资源里的强调色也真的换了",
+                    (System.Windows.Application.Current.TryFindResource("AccentBrush") as System.Windows.Media.SolidColorBrush)
+                        ?.Color.ToString() == "#FF3D8BD4",
+                    (System.Windows.Application.Current.TryFindResource("AccentBrush") as System.Windows.Media.SolidColorBrush)?.Color.ToString() ?? "(空)");
+
+                Check("色块画刷跟着变",
+                    accentSlot.Brush is System.Windows.Media.SolidColorBrush b && b.Color.ToString() == "#FF3D8BD4");
+
+                // 非法输入不应该把颜色搞坏
+                var paletteBefore = accentSlot.Hex;
+                accentSlot.Hex = "这不是颜色";
+                Check("非法输入被忽略", accentSlot.Hex == paletteBefore, accentSlot.Hex);
+
+                // 简写 / 大小写都要能吃
+                accentSlot.Hex = "9e2b25";
+                Check("不带 # 也认", accentSlot.Hex == "#9E2B25", accentSlot.Hex);
+
+                // 切预设后调色盘要同步显示新颜色
+                paletteViewModel.SelectedThemePreset = paletteViewModel.ThemePresets.First(p => p.PresetName.Contains("夜色"));
+                Check("切预设后调色盘同步",
+                    accentSlot.Hex.Equals(paletteViewModel.ThemeAccent, StringComparison.OrdinalIgnoreCase),
+                    $"槽 {accentSlot.Hex} / 主题 {paletteViewModel.ThemeAccent}");
+            }
+            catch (Exception ex)
+            {
+                Check("配色调色盘", false, ex.Message);
+            }
+            // ============ 10d. 扩展字体文件夹 ============
+            Section("扩展字体文件夹");
+
+            try
+            {
+                var fontDirectory = Path.Combine(AppContext.BaseDirectory, "selftest-fonts");
+                if (Directory.Exists(fontDirectory))
+                {
+                    Directory.Delete(fontDirectory, true);
+                }
+
+                Directory.CreateDirectory(fontDirectory);
+
+                using var fontViewModel = new MainViewModel(
+                    settings: AppSettings.Load(Path.Combine(AppContext.BaseDirectory, "selftest-fonts.json")),
+                    playbackStore: PlaybackStore.Load(Path.Combine(AppContext.BaseDirectory, "selftest-fonts-playback.json")));
+
+                fontViewModel.Overlay.ExtraFontsFolder = fontDirectory;
+
+                var fontsBefore = fontViewModel.Overlay.FontChoices.Count;
+                Check("空文件夹不会报错、也不会加东西",
+                    fontViewModel.Overlay.ScanExtraFonts() == 0 &&
+                    fontViewModel.Overlay.FontChoices.Count == fontsBefore,
+                    $"字体数 {fontViewModel.Overlay.FontChoices.Count}");
+
+                // 从系统字体目录复制一个真字体进去（只是复制，不安装）
+                var systemFont = new[]
+                {
+                    @"C:\Windows\Fonts\consola.ttf",
+                    @"C:\Windows\Fonts\arial.ttf",
+                    @"C:\Windows\Fonts\segoeui.ttf",
+                }.FirstOrDefault(File.Exists);
+
+                if (systemFont != null)
+                {
+                    File.Copy(systemFont, Path.Combine(fontDirectory, Path.GetFileName(systemFont)));
+
+                    var added = fontViewModel.Overlay.ScanExtraFonts();
+                    var newOnes = fontViewModel.Overlay.FontChoices.Skip(fontsBefore).ToList();
+
+                    Check("丢进文件夹的字体能被扫到", added > 0 && newOnes.Count > 0,
+                        $"新增 {added} 个：{string.Join("、", newOnes)}");
+
+                    Check("重复扫描不会重复添加",
+                        fontViewModel.Overlay.ScanExtraFonts() == 0,
+                        $"字体数 {fontViewModel.Overlay.FontChoices.Count}");
+
+                    // 选它之后 FontFamily 要真的指向加载进来的那个
+                    var picked = newOnes.First();
+                    fontViewModel.Overlay.FontFamilyName = picked;
+                    Check("选中扩展字体后 FontFamily 正确解析",
+                        fontViewModel.Overlay.FontFamily.Source.Contains(picked, StringComparison.OrdinalIgnoreCase),
+                        fontViewModel.Overlay.FontFamily.Source);
+                }
+                else
+                {
+                    Check("系统里能找到可用于测试的字体文件", false, "C:\\Windows\\Fonts 下没找到测试字体");
+                }
+
+                Check("默认文件夹落在数据目录下（没指定时）",
+                    new MainViewModel(settings: AppSettings.Load(Path.Combine(AppContext.BaseDirectory, "selftest-fonts2.json")))
+                        .Overlay.EffectiveFontsFolder.StartsWith(Core.AppPaths.DataDirectory, StringComparison.OrdinalIgnoreCase),
+                    "默认路径 = 数据目录\\fonts");
+
+                Directory.Delete(fontDirectory, true);
+            }
+            catch (Exception ex)
+            {
+                Check("扩展字体文件夹", false, ex.Message);
+            }
+            // ============ 10e. 界面字体 ============
+            Section("界面字体可换");
+
+            try
+            {
+                var app = System.Windows.Application.Current;
+                var fontSettings = Path.Combine(AppContext.BaseDirectory, "selftest-uifont.json");
+                if (File.Exists(fontSettings))
+                {
+                    File.Delete(fontSettings);
+                }
+
+                using var fontViewModel = new MainViewModel(
+                    settings: AppSettings.Load(fontSettings),
+                    playbackStore: PlaybackStore.Load(Path.Combine(AppContext.BaseDirectory, "selftest-uifont-playback.json")));
+
+                Check("主题里有界面字体资源",
+                    app.TryFindResource("AppFontFamily") is FontFamily,
+                    (app.TryFindResource("AppFontFamily") as FontFamily)?.Source ?? "(空)");
+
+                Check("默认状态下界面字体是内置默认值", fontViewModel.IsDefaultUiFont);
+
+                fontViewModel.UiFontName = "Consolas";
+                Check("换成 Consolas 后资源真的变了",
+                    (app.TryFindResource("AppFontFamily") as FontFamily)?.Source.Contains("Consolas", StringComparison.OrdinalIgnoreCase) == true,
+                    (app.TryFindResource("AppFontFamily") as FontFamily)?.Source ?? "(空)");
+
+                fontViewModel.UiFontName = string.Empty;
+                Check("恢复默认后又变回默认字体", fontViewModel.IsDefaultUiFont,
+                    (app.TryFindResource("AppFontFamily") as FontFamily)?.Source ?? "(空)");
+
+                // 无效字体名不该把界面搞崩
+                fontViewModel.UiFontName = "这个字体不存在ABC";
+                Check("无效字体名不会抛异常", true, (app.TryFindResource("AppFontFamily") as FontFamily)?.Source ?? "(空)");
+                fontViewModel.UiFontName = string.Empty;
+            }
+            catch (Exception ex)
+            {
+                Check("界面字体可换", false, ex.Message);
             }
             // ============ 11. 主题与资源 ============
             Section("界面主题与资源");

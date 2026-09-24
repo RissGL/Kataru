@@ -723,6 +723,72 @@ namespace AudioBookPlayer.ViewModels
             OnPropertyChanged(nameof(ZoomText));
             OnPropertyChanged(nameof(IsZoomed));
         }
+        // ---------------- 界面字体 ----------------
+
+        /// <summary>内置默认界面字体（和主题资源里的初值一致）。</summary>
+        public const string DefaultUiFontName = "Yu Gothic UI";
+
+        private string _uiFontName = string.Empty;
+
+        /// <summary>界面字体名（空 = 用默认）。改完立即生效并存盘。</summary>
+        public string UiFontName
+        {
+            get => _uiFontName;
+            set
+            {
+                var name = (value ?? string.Empty).Trim();
+                if (!SetProperty(ref _uiFontName, name))
+                {
+                    return;
+                }
+
+                ApplyUiFont();
+                OnPropertyChanged(nameof(UiFontDisplay));
+                OnPropertyChanged(nameof(IsDefaultUiFont));
+                _settings.UiFontFamilyName = name;
+                PersistSettings();
+            }
+        }
+
+        /// <summary>
+        /// 给输入框显示用：没设置时显示内置默认字体名（而不是空白框），
+        /// 用户把默认名字填回来等于"恢复默认"。
+        /// </summary>
+        public string UiFontDisplay
+        {
+            get => string.IsNullOrWhiteSpace(_uiFontName) ? DefaultUiFontName : _uiFontName;
+            set
+            {
+                var name = (value ?? string.Empty).Trim();
+                UiFontName = string.Equals(name, DefaultUiFontName, StringComparison.OrdinalIgnoreCase)
+                    ? string.Empty
+                    : name;
+            }
+        }
+        /// <summary>设置界面字体（供界面调用；传默认名等于恢复默认）。</summary>
+        public void SetUiFont(string? name) => UiFontDisplay = name ?? string.Empty;
+        /// <summary>界面字体是不是默认的。</summary>
+        public bool IsDefaultUiFont => string.IsNullOrWhiteSpace(_uiFontName);
+
+        /// <summary>把界面字体写进应用资源（DynamicResource 引用它，所以会实时刷新）。</summary>
+        private void ApplyUiFont()
+        {
+            try
+            {
+                var family = string.IsNullOrWhiteSpace(_uiFontName)
+                    ? SubtitleOverlayViewModel.ResolveFont(DefaultUiFontName)
+                    : SubtitleOverlayViewModel.ResolveFont(_uiFontName);
+
+                if (System.Windows.Application.Current != null)
+                {
+                    System.Windows.Application.Current.Resources["AppFontFamily"] = family;
+                }
+            }
+            catch (Exception)
+            {
+                // 字体名无效就维持原样
+            }
+        }
         /// <summary>关主窗口时收进托盘（而不是退出程序）。</summary>
         public bool MinimizeToTray
         {
@@ -2221,9 +2287,59 @@ namespace AudioBookPlayer.ViewModels
         }
 
         /// <summary>把当前配色写进应用资源（立刻生效）并保存。</summary>
+        // ---------------- 配色方案：调色盘 ----------------
+
+        private System.Collections.ObjectModel.ObservableCollection<ThemeColorSlot>? _themeSlots;
+
+        /// <summary>四个颜色槽（背景 / 强调 / 金色 / 文字），每个都带调色盘。</summary>
+        public System.Collections.ObjectModel.ObservableCollection<ThemeColorSlot> ThemeSlots => _themeSlots ??= BuildThemeSlots();
+
+        /// <summary>通用调色盘（XAML 里给每个槽复用同一份）。</summary>
+
+        private System.Collections.ObjectModel.ObservableCollection<ThemeColorSlot> BuildThemeSlots()
+        {
+            var slots = new System.Collections.ObjectModel.ObservableCollection<ThemeColorSlot>
+            {
+                new("background", "背景色", "窗口整体底色", ThemeBackground, hex => ThemeBackground = hex),
+                new("accent", "强调色", "按钮 / 进度条 / 选中态", ThemeAccent, hex => ThemeAccent = hex),
+                new("gold", "金色点缀", "当前章节 / 字幕角标", ThemeGold, hex => ThemeGold = hex),
+                new("foreground", "文字色", "正文主色（浅色主题用深字）", ThemeForeground, hex => ThemeForeground = hex, isLightColor: true),
+            };
+
+            return slots;
+        }
+
+        /// <summary>切换预设后，把颜色同步回调色盘（不触发回写）。</summary>
+        private void SyncThemeSlots()
+        {
+            if (_themeSlots == null)
+            {
+                return;
+            }
+
+            foreach (var slot in _themeSlots)
+            {
+                switch (slot.Key)
+                {
+                    case "background":
+                        slot.SyncFrom(ThemeBackground);
+                        break;
+                    case "accent":
+                        slot.SyncFrom(ThemeAccent);
+                        break;
+                    case "gold":
+                        slot.SyncFrom(ThemeGold);
+                        break;
+                    case "foreground":
+                        slot.SyncFrom(ThemeForeground);
+                        break;
+                }
+            }
+        }
         public void ApplyTheme()
         {
             Themes.ThemeService.Apply(_theme);
+            SyncThemeSlots();
 
             _settings.ThemeBackground = _theme.Background;
             _settings.ThemeForeground = _theme.Foreground;
@@ -2456,6 +2572,8 @@ namespace AudioBookPlayer.ViewModels
 
         // ---------------- 设置 / 数据 ----------------
 
+        /// <summary>把当前设置写盘（界面上的按钮改完设置后调用）。</summary>
+        public void PersistOverlaySettings() => PersistSettings();
         private void PersistSettings()
         {
             // 启动时正在"应用设置"，这时内存里的状态还不完整（比如媒体库还没扫描，
@@ -2645,6 +2763,9 @@ namespace AudioBookPlayer.ViewModels
             Overlay.FontFamilyName = _settings.FontFamilyName;
             Overlay.FontSize = _settings.FontSize;
             Overlay.FontWeightName = _settings.FontWeightName;
+            Overlay.ExtraFontsFolder = _settings.ExtraFontsFolder;
+            _uiFontName = _settings.UiFontFamilyName ?? string.Empty;
+            ApplyUiFont();
             Overlay.ForegroundHex = _settings.ForegroundHex;
             Overlay.OutlineHex = _settings.OutlineHex;
             Overlay.OutlineThickness = _settings.OutlineThickness;
@@ -2691,6 +2812,7 @@ namespace AudioBookPlayer.ViewModels
             _settings.FontFamilyName = Overlay.FontFamilyName;
             _settings.FontSize = Overlay.FontSize;
             _settings.FontWeightName = Overlay.FontWeightName;
+            _settings.ExtraFontsFolder = Overlay.ExtraFontsFolder;
             _settings.ForegroundHex = Overlay.ForegroundHex;
             _settings.OutlineHex = Overlay.OutlineHex;
             _settings.OutlineThickness = Overlay.OutlineThickness;

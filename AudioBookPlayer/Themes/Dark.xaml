@@ -709,6 +709,16 @@
         </Setter>
     </Style>
 
+    <!-- ==================== 界面字体（可在设置里更换） ==================== -->
+    <!-- FontFamily 是继承属性：只要设在 Window 上，所有子控件都会跟着走，
+         所以换字体只需要替换这一个资源（DynamicResource 会实时生效）。 -->
+    <FontFamily x:Key="AppFontFamily">Yu Gothic UI, Microsoft YaHei UI, Microsoft JhengHei UI, Segoe UI</FontFamily>
+
+    <Style TargetType="Window">
+        <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+        <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
+    </Style>
     <!-- ==================== 悬浮字幕的改大小把手 ==================== -->
     <Style x:Key="OverlayResizeThumbStyle" TargetType="Thumb">
         <Setter Property="Width" Value="22" />

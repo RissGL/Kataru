@@ -89,6 +89,110 @@ namespace AudioBookPlayer.Views
         /// Ctrl + 滚轮缩放界面（像浏览器那样），每个视图各自记一份缩放。
         /// 用 PreviewMouseWheel：滚轮会先被列表吞掉，冒泡阶段就收不到了。
         /// </summary>
+        /// <summary>选择扩展字体文件夹。</summary>
+        private void OnPickFontsFolderClick(object sender, RoutedEventArgs e)
+        {
+            var viewModel = ViewModel;
+            if (viewModel == null)
+            {
+                return;
+            }
+
+            // .NET 8+ 的 WPF 自带文件夹选择框，不用 WinForms
+            var dialog = new Microsoft.Win32.OpenFolderDialog
+            {
+                Title = "选择扩展字体文件夹（放 .ttf / .otf）",
+                InitialDirectory = System.IO.Directory.Exists(viewModel.Overlay.EffectiveFontsFolder)
+                    ? viewModel.Overlay.EffectiveFontsFolder
+                    : null,
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            viewModel.Overlay.ExtraFontsFolder = dialog.FolderName;
+            var added = viewModel.Overlay.ScanExtraFonts();
+            viewModel.PersistOverlaySettings();
+
+            System.Windows.MessageBox.Show(
+                added > 0
+                    ? $"已加入 {added} 个字体，现在可以在字幕字体里选了。"
+                    : "这个文件夹里没有找到 .ttf / .otf 字体文件。",
+                "扩展字体",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+        }
+
+        /// <summary>重新扫描扩展字体文件夹（不用重启）。</summary>
+        private void OnRescanFontsClick(object sender, RoutedEventArgs e)
+        {
+            var viewModel = ViewModel;
+            if (viewModel == null)
+            {
+                return;
+            }
+
+            var added = viewModel.Overlay.ScanExtraFonts();
+            ViewModel?.PersistOverlaySettings();
+
+            System.Windows.MessageBox.Show(
+                added > 0
+                    ? $"新加入 {added} 个字体。"
+                    : "没有发现新字体（已经加载过的不会重复计数）。",
+                "扩展字体",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+        }
+        /// <summary>
+        /// 界面字体下拉里选了一项。
+        ///
+        /// 必须在这里立刻提交：输入框绑的是 LostFocus，选完焦点还在框里，
+        /// 不点别处就不会提交 —— 用起来就像"改了没反应"。
+        /// </summary>
+        private void OnUiFontSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            CommitComboText(UiFontBox, text =>
+            {
+                if (ViewModel != null)
+                {
+                    ViewModel.SetUiFont(text);
+                }
+            });
+        }
+
+        /// <summary>字幕字体下拉里选了一项（同上，选中即生效）。</summary>
+        private void OnSubtitleFontSelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            CommitComboText(SubtitleFontBox, text =>
+            {
+                if (ViewModel != null)
+                {
+                    ViewModel.Overlay.FontFamilyName = text;
+                }
+            });
+        }
+
+        /// <summary>把下拉当前的文本提交出去。</summary>
+        private static void CommitComboText(System.Windows.Controls.ComboBox box, Action<string> apply)
+        {
+            var text = box.SelectedItem as string ?? box.Text;
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                apply(text.Trim());
+            }
+        }
+        /// <summary>界面字体恢复默认。</summary>
+        private void OnResetUiFontClick(object sender, RoutedEventArgs e)
+        {
+            if (ViewModel != null)
+            {
+                ViewModel.UiFontName = string.Empty;
+            }
+
+            e.Handled = true;
+        }
         protected override void OnPreviewMouseWheel(MouseWheelEventArgs e)
         {
             if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control))
@@ -241,7 +345,6 @@ namespace AudioBookPlayer.Views
             }
         }
 
-        /// <summary>配色面板里的色块：按 Tag 判断改的是哪一类颜色。</summary>
         private void OnThemeSwatchClick(object sender, RoutedEventArgs e)
         {
             if (sender is not Button { Tag: string color } || ViewModel == null)

@@ -46,6 +46,39 @@ namespace AudioBookPlayer.Diagnostics
                 : Path.Combine(AppContext.BaseDirectory, "ui-snapshot-playback.json");
 
             MainViewModel? viewModel = null;
+            // --picker：只渲染调色盘控件本身（它在 Popup 里，正常截图看不到）
+            if (HasFlag(args, "--picker"))
+            {
+                var panel = new Controls.ColorPickerPanel
+                {
+                    Color = System.Windows.Media.Color.FromRgb(0x9E, 0x2B, 0x25),
+                };
+
+                var wrapper = new System.Windows.Controls.Border
+                {
+                    Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1A, 0x1A, 0x1A)),
+                    Padding = new System.Windows.Thickness(14),
+                    Child = panel,
+                };
+
+                var pickerSize = new Size(276, 250);
+                wrapper.Measure(pickerSize);
+                wrapper.Arrange(new Rect(pickerSize));
+                wrapper.UpdateLayout();
+
+                var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(276, 250, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                bitmap.Render(wrapper);
+
+                var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+                encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+                using (var stream = File.Create(output))
+                {
+                    encoder.Save(stream);
+                }
+
+                Console.WriteLine($"调色盘截图已保存：{output}");
+                return 0;
+            }
             MainWindow? window = null;
             var playback = PlaybackStore.Load(playbackPath);
 

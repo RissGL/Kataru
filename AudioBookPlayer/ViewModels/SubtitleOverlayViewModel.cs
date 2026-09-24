@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Windows;
@@ -361,20 +362,118 @@ namespace AudioBookPlayer.ViewModels
             set => SetProperty(ref _isVisible, value);
         }
 
-        /// <summary>可供选择的常用字体。</summary>
+        /// <summary>精选的常用字体（不想让下拉里塞进几百个系统字体，想加别的走"添加字体"）。</summary>
         public static IReadOnlyList<string> AvailableFonts { get; } = new[]
         {
             DefaultFontFamilyName,
             "Yu Gothic UI",
             "Meiryo",
             "MS Gothic",
+            "Yu Mincho",
             "Microsoft YaHei UI",
             "Microsoft YaHei",
             "SimHei",
-            "Noto Sans CJK JP",
             "Source Han Sans SC",
+            "Noto Sans CJK JP",
             "Segoe UI",
         };
+
+        /// <summary>下拉里实际显示的字体（精选 + 扩展文件夹里发现的）。</summary>
+        public System.Collections.ObjectModel.ObservableCollection<string> FontChoices { get; } =
+            new System.Collections.ObjectModel.ObservableCollection<string>(AvailableFonts);
+
+        /// <summary>字体名 → 字体家族（扩展文件夹里加载进来的，解析字体时要优先用它）。</summary>
+        private static readonly Dictionary<string, FontFamily> ExtraFonts =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>扩展字体文件夹（用户指定；留空则用数据目录下的 fonts）。</summary>
+        public string ExtraFontsFolder
+        {
+            get => _extraFontsFolder;
+            set => SetProperty(ref _extraFontsFolder, value ?? string.Empty);
+        }
+
+        private string _extraFontsFolder = string.Empty;
+
+        /// <summary>实际生效的扩展字体文件夹。</summary>
+        public string EffectiveFontsFolder => string.IsNullOrWhiteSpace(ExtraFontsFolder)
+            ? System.IO.Path.Combine(Core.AppPaths.DataDirectory, "fonts")
+            : ExtraFontsFolder.Trim();
+
+        /// <summary>
+        /// 扫描扩展字体文件夹，把里面的字体加进下拉列表。
+        /// 放进去就能用，不用装到系统里 —— 换电脑时把整个文件夹拷过去即可。
+        /// </summary>
+        public int ScanExtraFonts()
+        {
+            var folder = EffectiveFontsFolder;
+            var added = 0;
+
+            try
+            {
+                System.IO.Directory.CreateDirectory(folder);
+
+                // 目录里没有字体文件就什么都不做（目录不存在也已经建好了）
+                var hasFontFile = System.IO.Directory
+                    .EnumerateFiles(folder)
+                    .Any(f => f.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) ||
+                              f.EndsWith(".otf", StringComparison.OrdinalIgnoreCase) ||
+                              f.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase));
+
+                if (!hasFontFile)
+                {
+                    return 0;
+                }
+
+                // WPF 能直接从目录里列出字体家族，不用自己解析 ttf
+                // 注意：路径必须以分隔符结尾并转成 URI —— 否则 WPF 会把它当成"某个字体文件"，
+                // 一个字体都读不出来（这个坑踩过）。
+                var location = new Uri(folder.EndsWith(System.IO.Path.DirectorySeparatorChar)
+                    ? folder
+                    : folder + System.IO.Path.DirectorySeparatorChar);
+
+                foreach (var family in Fonts.GetFontFamilies(location))
+                {
+                    var name = family.Source;
+                    // 从目录加载的字体会带 "./#" 前缀（如 "./#Consolas"），显示时要去掉
+                    if (name.StartsWith("./#", StringComparison.Ordinal))
+                    {
+                        name = name.Substring(3);
+                    }
+
+                    var hashIndex = name.LastIndexOf('#');
+                    if (hashIndex >= 0)
+                    {
+                        name = name.Substring(hashIndex + 1);
+                    }
+                    if (string.IsNullOrWhiteSpace(name))
+                    {
+                        continue;
+                    }
+
+                    ExtraFonts[name] = family;
+
+                    if (!FontChoices.Any(f => string.Equals(f, name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        FontChoices.Add(name);
+                        added++;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // 文件夹不可读、字体损坏都不该影响其它功能
+            }
+
+            return added;
+        }
+
+        /// <summary>配置里存的字体名 → FontFamily（扩展字体优先）。</summary>
+        /// <summary>解析字体名（扩展字体文件夹里的优先）。界面字体也用它。</summary>
+        public static FontFamily ResolveFont(string name) => ResolveFontFamily(name);
+
+        private static FontFamily ResolveFontFamily(string name) =>
+            ExtraFonts.TryGetValue(name, out var extra) ? extra : new FontFamily(name);
 
         /// <summary>可供选择的描边色。</summary>
         public static IReadOnlyList<string> AvailableOutlineColors { get; } = new[]
@@ -389,7 +488,6 @@ namespace AudioBookPlayer.ViewModels
         };
 
         // XAML 绑定不能走静态属性，这里提供实例访问器。
-        public IReadOnlyList<string> FontChoices => AvailableFonts;
 
         public IReadOnlyList<string> ForegroundColorChoices => AvailableForegroundColors;
 
