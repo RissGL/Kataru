@@ -714,8 +714,10 @@
          所以换字体只需要替换这一个资源（DynamicResource 会实时生效）。 -->
     <FontFamily x:Key="AppFontFamily">Yu Gothic UI, Microsoft YaHei UI, Microsoft JhengHei UI, Segoe UI</FontFamily>
 
+    <!-- 注意：这里**不要**放 FontFamily。
+         样式 Setter 里的 DynamicResource 不会去刷新已经生效的属性 —— 运行中换字体会没反应。
+         字体是写在各窗口元素上的（见 MainWindow.xaml 的 FontFamily="{DynamicResource AppFontFamily}"）。 -->
     <Style TargetType="Window">
-        <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}" />
         <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
         <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
     </Style>

@@ -4,12 +4,12 @@
         xmlns:controls="clr-namespace:AudioBookPlayer.Controls"
         xmlns:vm="clr-namespace:AudioBookPlayer.ViewModels"
         Title="KATARU"
+        FontFamily="{DynamicResource AppFontFamily}"
         Width="1240" Height="840"
         MinWidth="1000" MinHeight="660"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource WindowBackgroundBrush}"
         Foreground="{DynamicResource TextPrimaryBrush}"
-        FontFamily="Microsoft YaHei UI, Segoe UI"
         FontSize="13"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Ideal">

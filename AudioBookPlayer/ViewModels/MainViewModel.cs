@@ -779,9 +779,28 @@ namespace AudioBookPlayer.ViewModels
                     ? SubtitleOverlayViewModel.ResolveFont(DefaultUiFontName)
                     : SubtitleOverlayViewModel.ResolveFont(_uiFontName);
 
-                if (System.Windows.Application.Current != null)
+                var app = System.Windows.Application.Current;
+                if (app == null)
                 {
-                    System.Windows.Application.Current.Resources["AppFontFamily"] = family;
+                    return;
+                }
+
+                // ① 换资源：以后新建的窗口会用它
+                app.Resources["AppFontFamily"] = family;
+
+                // ② 直接设到"已经打开的窗口"上。
+                //    样式 Setter 里的 DynamicResource 不保证会回头刷新已经生效的属性，
+                //    所以改完当场没反应 —— 这一步才保证立刻生效。
+                foreach (System.Windows.Window window in app.Windows)
+                {
+                    window.FontFamily = family;
+
+                    // 光设窗口还不够：内容根元素自己也要设一次。
+                    // TextElement.FontFamily 是继承属性，设在根上，整棵树里没有显式指定字体的控件都会跟着变。
+                    if (window.Content is DependencyObject root)
+                    {
+                        System.Windows.Documents.TextElement.SetFontFamily(root, family);
+                    }
                 }
             }
             catch (Exception)

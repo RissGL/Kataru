@@ -123,6 +123,13 @@ namespace AudioBookPlayer.Diagnostics
                         viewModel.CurrentMode = AppMode.Settings;
                     }
 
+                    // --ui-font SimSun：窗口已经建好之后再换界面字体（复现"运行时改字体没反应"）
+                    var uiFont = GetOption(args, "--ui-font");
+                    if (!string.IsNullOrEmpty(uiFont))
+                    {
+                        viewModel.UiFontName = uiFont;
+                        Console.WriteLine($"[diag] ui-font requested = {uiFont}, windows = {System.Windows.Application.Current?.Windows.Count}");
+                    }
                     // --zoom 1.5：把当前视图放大到 150%（用来验证 Ctrl+滚轮缩放）
                     var zoom = GetOption(args, "--zoom");
                     if (!string.IsNullOrEmpty(zoom) && double.TryParse(zoom, out var zoomValue))
