@@ -23,9 +23,9 @@ namespace AudioBookPlayer.Windows
         private const int WmCommand = 0x0111;
         private const int ThbnClicked = 0x1800;
 
-        private const byte ButtonPrevious = 1;
-        private const byte ButtonPlayPause = 2;
-        private const byte ButtonNext = 3;
+        private const uint ButtonPrevious = 1;
+        private const uint ButtonPlayPause = 2;
+        private const uint ButtonNext = 3;
 
         private const int DwmwaHasIconicBitmap = 10;
 
@@ -59,7 +59,7 @@ namespace AudioBookPlayer.Windows
         /// <summary>点了"下一章"。</summary>
         public event EventHandler? NextRequested;
 
-        /// <summary>接到主窗口上（要在 HWND 建好之后调用）。</summary>
+        /// <summary>接到主窗口上（要在 HWND 建好、窗口显示之后调用）。</summary>
         public void Attach()
         {
             _handle = new WindowInteropHelper(_window).Handle;
@@ -71,16 +71,107 @@ namespace AudioBookPlayer.Windows
             _source = HwndSource.FromHwnd(_handle);
             _source?.AddHook(WndProc);
 
-            // 任务栏按钮还没建好之前调 TaskbarList 是没用的，所以等它发消息
-            if (TaskbarButtonCreatedMessage != 0)
+            // 窗口还没显示时任务栏按钮不存在，先挂到 IsVisibleChanged 上
+            if (_window.IsVisible)
             {
-                NativeMethods.PostMessage(_handle, TaskbarButtonCreatedMessage, IntPtr.Zero, IntPtr.Zero);
+                TryInitialize();
             }
+            else
+            {
+                _window.IsVisibleChanged += OnWindowVisibleChanged;
+            }
+        }
+
+        private void OnWindowVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (_window.IsVisible)
+            {
+                _window.IsVisibleChanged -= OnWindowVisibleChanged;
+                TryInitialize();
+            }
+        }
+
+        /// <summary>
+        /// 初始化任务栏集成。
+        ///
+        /// 关键：ThumbBarAddButtons 在"任务栏按钮还没建好"时会失败，
+        /// 而那个时机很难精确——所以这里失败就重试几次（每 700ms，最多 8 次）。
+        /// 以前用"给自己发一条 TaskbarButtonCreated 消息"来催，那是错的：
+        /// 那个消息必须由系统在按钮就绪后发过来。
+        /// </summary>
+        private void TryInitialize()
+        {
+            if (_disposed || _buttonsAdded)
+            {
+                return;
+            }
+
+            CreateTaskbar();
+
+            if (_buttonsAdded)
+            {
+                _retryTimer?.Stop();
+                _retryTimer = null;
+                ApplyPendingState();
+                return;
+            }
+
+            _retries++;
+
+            if (_retries > MaxRetries)
+            {
+                Status = "放弃"; Diagnostics.ActivityLog.WriteNow($"任务栏集成放弃：重试 {MaxRetries} 次仍失败（{_lastError ?? "原因未知"}）");
+                _retryTimer?.Stop();
+                _retryTimer = null;
+                return;
+            }
+
+            _retryTimer ??= CreateRetryTimer();
+            if (!_retryTimer.IsEnabled)
+            {
+                _retryTimer.Start();
+            }
+        }
+
+        private const int MaxRetries = 8;
+        private int _retries;
+        private string? _lastError;
+
+        /// <summary>初始化结果（自检/日志用）。</summary>
+        public string Status { get; private set; } = "未初始化";
+        private System.Windows.Threading.DispatcherTimer? _retryTimer;
+
+        private System.Windows.Threading.DispatcherTimer CreateRetryTimer()
+        {
+            var timer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(700),
+            };
+
+            timer.Tick += (_, _) => TryInitialize();
+            return timer;
+        }
+
+        private string _pendingTooltip = "KATARU";
+        private Action<Graphics, int, int>? _pendingRender;
+        private bool _pendingHasCover;
+        private double _pendingProgress = -1;
+
+        /// <summary>初始化成功后把攒下的状态一次性应用上去。</summary>
+        private void ApplyPendingState()
+        {
+            Update(_pendingTooltip, _pendingRender, _pendingHasCover);
+            SetProgress(_pendingProgress);
+            UpdateButtons();
         }
 
         /// <summary>更新悬停提示 + 缩略图（书名 / 章节 / 封面）。</summary>
         public void Update(string tooltip, Action<Graphics, int, int>? renderThumbnail = null, bool hasCover = false)
         {
+            _pendingTooltip = tooltip;
+            _pendingRender = renderThumbnail;
+            _pendingHasCover = hasCover;
+
             if (_taskbar == null)
             {
                 return;
@@ -117,6 +208,8 @@ namespace AudioBookPlayer.Windows
         /// <summary>任务栏图标上显示播放进度（0~1，负数表示不显示）。</summary>
         public void SetProgress(double progress)
         {
+            _pendingProgress = progress;
+
             if (_taskbar == null)
             {
                 return;
@@ -176,7 +269,7 @@ namespace AudioBookPlayer.Windows
 
             if (msg == WmCommand && ((long)wParam >> 16) == ThbnClicked)
             {
-                switch ((int)((long)wParam & 0xFFFF))
+                switch ((uint)((long)wParam & 0xFFFF))
                 {
                     case ButtonPrevious:
                         PreviousRequested?.Invoke(this, EventArgs.Empty);
@@ -215,8 +308,9 @@ namespace AudioBookPlayer.Windows
                 CreateIcons();
                 AddButtons();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                _lastError = ex.Message;
                 _taskbar = null;
             }
         }
@@ -290,10 +384,12 @@ namespace AudioBookPlayer.Windows
                 });
 
                 _buttonsAdded = true;
+                Status = "按钮已添加"; Diagnostics.ActivityLog.WriteNow("任务栏缩略图按钮已添加");
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // 忽略
+                _lastError = $"ThumbBarAddButtons 失败：{ex.Message}"; Status = _lastError;
+                Diagnostics.ActivityLog.WriteNow(_lastError);
             }
         }
 
@@ -321,12 +417,14 @@ namespace AudioBookPlayer.Windows
             }
         }
 
-        private static ThumbnailToolbarButton MakeButton(IntPtr icon, byte id, string tip) => new()
+        private static ThumbnailToolbarButton MakeButton(IntPtr icon, uint id, string tip) => new()
         {
-            Icon = icon,
+            Mask = ThumbnailButtonMask.Icon | ThumbnailButtonMask.Tooltip | ThumbnailButtonMask.Flags,
             Id = id,
-            Flags = ThumbnailButtonFlags.Enabled,
+            BitmapIndex = 0,
+            Icon = icon,
             Tip = tip,
+            Flags = ThumbnailButtonFlags.Enabled,
         };
 
         /// <summary>用 DWM 设置自定义缩略图（画一张封面卡片）。</summary>
@@ -371,7 +469,7 @@ namespace AudioBookPlayer.Windows
         }
 
         [ComImport]
-        [Guid("EA1AFB91-9E28-4B86-90E9-9E9F8A5EC248")]
+        [Guid("EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF")]
         [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface ITaskbarList3
         {
@@ -422,7 +520,16 @@ namespace AudioBookPlayer.Windows
         }
 
         [Flags]
-        private enum ThumbnailButtonFlags
+        private enum ThumbnailButtonMask : uint
+        {
+            Bitmap = 0x4,
+            Icon = 0x1,
+            Tooltip = 0x2,
+            Flags = 0x8,
+        }
+
+        [Flags]
+        private enum ThumbnailButtonFlags : uint
         {
             Enabled = 0x00,
             Disabled = 0x01,
@@ -432,20 +539,25 @@ namespace AudioBookPlayer.Windows
             NonInteractive = 0x10,
         }
 
+        /// <summary>
+        /// Win32 的 THUMBBUTTON（注意字段顺序，写错一个都加不上按钮）：
+        ///   UINT dwMask; UINT iId; UINT iBitmap; HICON hIcon; WCHAR szTip[260]; THUMBBUTTONFLAGS dwFlags;
+        /// </summary>
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct ThumbnailToolbarButton
         {
+            public ThumbnailButtonMask Mask;
+
+            public uint Id;
+
+            public uint BitmapIndex;
+
             public IntPtr Icon;
 
-            [MarshalAs(UnmanagedType.LPWStr)]
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
             public string Tip;
 
-            public byte Id;
-
             public ThumbnailButtonFlags Flags;
-
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 7)]
-            public byte[] Padding; // 占位，保证结构体大小和 Win32 一致
         }
     }
 }

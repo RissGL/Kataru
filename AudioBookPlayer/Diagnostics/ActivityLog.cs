@@ -62,6 +62,23 @@ namespace AudioBookPlayer.Diagnostics
             }
         }
 
+        /// <summary>立刻写一条到 activity.log（用于关键初始化结果，方便事后排查）。</summary>
+        public static void WriteNow(string message)
+        {
+            try
+            {
+                var directory = Core.AppPaths.DataDirectory;
+                System.IO.Directory.CreateDirectory(directory);
+                System.IO.File.AppendAllText(
+                    System.IO.Path.Combine(directory, "activity.log"),
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}",
+                    new UTF8Encoding(true));
+            }
+            catch (Exception)
+            {
+                // 写不了就算了
+            }
+        }
         /// <summary>启动看门狗（UI 线程卡住时自动写日志）。</summary>
         public static void StartWatchdog(string logPath)
         {
