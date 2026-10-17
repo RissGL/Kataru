@@ -99,6 +99,16 @@ namespace AudioBookPlayer.Windows
         /// <summary>广播给所有顶层窗口。</summary>
         internal static readonly IntPtr HWND_BROADCAST = new IntPtr(0xFFFF);
 
+
+        /// <summary>给任务栏缩略图提供一张静态图片（封面卡片）。</summary>
+        [DllImport("dwmapi.dll", PreserveSig = true)]
+        internal static extern int DwmSetIconicThumbnail(IntPtr hwnd, IntPtr hBitmap, uint flags);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern bool DestroyIcon(IntPtr hIcon);
+
+        [DllImport("gdi32.dll", SetLastError = true)]
+        internal static extern bool DeleteObject(IntPtr hObject);
         /// <summary>注册一条全局唯一的自定义消息（单实例唤醒用）。</summary>
         [DllImport("user32.dll", EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode, SetLastError = true)]
         internal static extern int RegisterWindowMessage(string lpString);

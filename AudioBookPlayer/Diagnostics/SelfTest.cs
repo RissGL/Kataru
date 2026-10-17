@@ -1372,6 +1372,44 @@ namespace AudioBookPlayer.Diagnostics
             {
                 Check("界面字体可换", false, ex.Message);
             }
+            // ============ 10g. 任务栏缩略图 ============
+            Section("任务栏缩略图 / 按钮");
+
+            try
+            {
+                using var barViewModel = new MainViewModel(
+                    settings: AppSettings.Load(Path.Combine(AppContext.BaseDirectory, "selftest-taskbar.json")),
+                    playbackStore: PlaybackStore.Load(Path.Combine(AppContext.BaseDirectory, "selftest-taskbar-playback.json")));
+
+                Check("没有播放时提示就是 KATARU", barViewModel.TaskbarTooltip == "KATARU",
+                    barViewModel.TaskbarTooltip);
+
+                // 缩略图能画出来（不抛异常，且不是全黑）
+                using (var bitmap = new System.Drawing.Bitmap(320, 180))
+                {
+                    using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
+                    {
+                        barViewModel.RenderTaskbarThumbnail(graphics, 320, 180);
+                    }
+
+                    var corner = bitmap.GetPixel(4, 4);
+                    Check("缩略图绘制不抛异常且有底色",
+                        corner.A > 0,
+                        $"角落颜色 {corner}");
+                }
+
+                // 任务栏集成对象能建、能挂（没有真实任务栏也不该炸）
+                var taskbar = new Windows.TaskbarIntegration(System.Windows.Application.Current.MainWindow
+                                                              ?? new Window());
+                taskbar.SetProgress(0.5);
+                taskbar.SetPlaying(true);
+                taskbar.Dispose();
+                Check("任务栏集成对象可创建并在没有窗口时安全降级", true);
+            }
+            catch (Exception ex)
+            {
+                Check("任务栏缩略图", false, ex.Message);
+            }
             // ============ 11. 主题与资源 ============
             Section("界面主题与资源");
 

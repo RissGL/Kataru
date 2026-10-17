@@ -16,6 +16,7 @@ namespace AudioBookPlayer
         private MainViewModel? _viewModel;
         private TrayIconService? _tray;
         private SingleInstanceGuard? _instanceGuard;
+        private TaskbarIntegration? _taskbar;
         private bool _minimizedTipShown;
 
         /// <summary>真的在退出（托盘菜单里选了退出）——主窗口的"关闭即收托盘"要看这个标志。</summary>
@@ -209,6 +210,12 @@ namespace AudioBookPlayer
 
                 _viewModel.ReapplyFonts();
             });
+            // 任务栏缩略图：封面卡片 + 上一章/播放/下一章按钮 + 悬停提示（像网易云那样）
+            _taskbar = new TaskbarIntegration(mainWindow);
+            _taskbar.PreviousRequested += (_, _) => _viewModel.GoPreviousChapter();
+            _taskbar.NextRequested += (_, _) => _viewModel.GoNextChapter();
+            _taskbar.PlayPauseRequested += (_, _) => _viewModel.TogglePlayPause();
+            mainWindow.TaskbarAttached(_taskbar, _viewModel);
             _viewModel.Start();
             _viewModel.LoadFromCommandLine(args);
 
@@ -313,6 +320,8 @@ namespace AudioBookPlayer
         protected override void OnExit(ExitEventArgs e)
         {
             IsExiting = true;
+            _taskbar?.Dispose();
+            _taskbar = null;
             _instanceGuard?.Dispose();
             _instanceGuard = null;
             _tray?.Dispose();

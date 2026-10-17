@@ -39,6 +39,10 @@ namespace AudioBookPlayer.Views
             var instanceSource = System.Windows.Interop.HwndSource.FromHwnd(
                 Win32WindowHelper.GetHandle(this));
             instanceSource?.AddHook(OnSingleInstanceMessage);
+
+            // 任务栏缩略图要在 HWND 建好之后挂载
+            _taskbar?.Attach();
+            RefreshTaskbar();
         }
 
         /// <summary>
@@ -70,6 +74,61 @@ namespace AudioBookPlayer.Views
 
             return IntPtr.Zero;
         }
+
+        /// <summary>接上任务栏集成（App 启动时调用）。</summary>
+        public void TaskbarAttached(Windows.TaskbarIntegration taskbar, ViewModels.MainViewModel viewModel)
+        {
+            _taskbar = taskbar;
+            _taskbarViewModel = viewModel;
+
+            taskbar.Attach();
+            RefreshTaskbar();
+
+            viewModel.PropertyChanged += (_, e) =>
+            {
+                switch (e.PropertyName)
+                {
+                    case nameof(ViewModels.MainViewModel.IsPlaying):
+                    case nameof(ViewModels.MainViewModel.CurrentBookTitle):
+                    case nameof(ViewModels.MainViewModel.CurrentChapterTitle):
+                    case nameof(ViewModels.MainViewModel.SelectedBook):
+                    case nameof(ViewModels.MainViewModel.PositionSeconds):
+                        RefreshTaskbar();
+                        break;
+                }
+            };
+        }
+
+        private Windows.TaskbarIntegration? _taskbar;
+        private ViewModels.MainViewModel? _taskbarViewModel;
+
+        /// <summary>刷新任务栏缩略图的提示、按钮状态和进度。</summary>
+        private void RefreshTaskbar()
+        {
+            var taskbar = _taskbar;
+            var viewModel = _taskbarViewModel ?? ViewModel;
+            if (taskbar == null || viewModel == null)
+            {
+                return;
+            }
+
+            try
+            {
+                taskbar.SetPlaying(viewModel.IsPlaying);
+
+                var duration = viewModel.DurationSeconds;
+                taskbar.SetProgress(duration > 0 ? viewModel.PositionSeconds / duration : -1);
+
+                taskbar.Update(
+                    viewModel.TaskbarTooltip,
+                    viewModel.RenderTaskbarThumbnail,
+                    !string.IsNullOrEmpty(viewModel.TaskbarCoverPath));
+            }
+            catch (Exception)
+            {
+                // 任务栏集成失败不影响播放
+            }
+        }
         /// <summary>从托盘恢复窗口。</summary>
         public void RestoreFromTray()
         {
@@ -93,7 +152,6 @@ namespace AudioBookPlayer.Views
         private void OnPickFontsFolderClick(object sender, RoutedEventArgs e)
         {
             var viewModel = ViewModel;
-            if (viewModel == null)
             {
                 return;
             }

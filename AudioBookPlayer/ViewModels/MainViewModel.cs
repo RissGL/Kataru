@@ -765,6 +765,78 @@ namespace AudioBookPlayer.ViewModels
                     : name;
             }
         }
+        // ---------------- 任务栏缩略图 ----------------
+
+        /// <summary>任务栏悬停提示文字：KATARU · 书名 · 章节。</summary>
+        public string TaskbarTooltip
+        {
+            get
+            {
+                var book = CurrentBookTitle;
+
+                // 没选书时这里是占位文字（"（未选择书）"），别让它出现在任务栏提示里
+                if (string.IsNullOrEmpty(book) || book.StartsWith("（未选择", StringComparison.Ordinal))
+                {
+                    return "KATARU";
+                }
+
+                return string.IsNullOrEmpty(CurrentChapterTitle)
+                    ? $"KATARU · {CurrentBookTitle}"
+                    : $"KATARU · {CurrentBookTitle} · {CurrentChapterTitle}";
+            }
+        }
+
+        /// <summary>当前书的封面路径（任务栏缩略图用）。</summary>
+        public string? TaskbarCoverPath => SelectedBook?.CoverPath;
+
+        /// <summary>
+        /// 画任务栏缩略图：封面 + 底部一条书名/章节。
+        /// 由 TaskbarIntegration 调用（拿到的是 GDI+ 画布）。
+        /// </summary>
+        public void RenderTaskbarThumbnail(System.Drawing.Graphics graphics, int width, int height)
+        {
+            try
+            {
+                graphics.Clear(System.Drawing.Color.FromArgb(0x12, 0x10, 0x11));
+
+                // 封面：铺满并裁切
+                var coverPath = TaskbarCoverPath;
+                if (!string.IsNullOrEmpty(coverPath) && System.IO.File.Exists(coverPath))
+                {
+                    using var cover = System.Drawing.Image.FromFile(coverPath);
+                    var scale = Math.Max((double)width / cover.Width, (double)height / cover.Height);
+                    var drawWidth = (int)(cover.Width * scale);
+                    var drawHeight = (int)(cover.Height * scale);
+                    graphics.DrawImage(cover, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+                }
+
+                // 底部渐变 + 文字
+                var barHeight = Math.Max(38, height / 4);
+                using (var overlay = new System.Drawing.Drawing2D.LinearGradientBrush(
+                           new System.Drawing.Rectangle(0, height - barHeight, width, barHeight),
+                           System.Drawing.Color.FromArgb(210, 0, 0, 0),
+                           System.Drawing.Color.FromArgb(240, 0, 0, 0),
+                           System.Drawing.Drawing2D.LinearGradientMode.Vertical))
+                {
+                    graphics.FillRectangle(overlay, 0, height - barHeight, width, barHeight);
+                }
+
+                using var titleFont = new System.Drawing.Font("Microsoft YaHei UI", 11f, System.Drawing.FontStyle.Bold);
+                using var subFont = new System.Drawing.Font("Microsoft YaHei UI", 9f);
+                using var white = new System.Drawing.SolidBrush(System.Drawing.Color.White);
+                using var gray = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(200, 220, 220, 220));
+
+                var title = CurrentBookTitle ?? string.Empty;
+                var subtitle = CurrentChapterTitle ?? string.Empty;
+                var rect = new System.Drawing.RectangleF(12, height - barHeight + 6, width - 24, 18);
+                graphics.DrawString(title, titleFont, white, rect);
+                graphics.DrawString(subtitle, subFont, gray, new System.Drawing.RectangleF(12, height - barHeight + 22, width - 24, 16));
+            }
+            catch (Exception)
+            {
+                // 画不出来就让 Windows 用默认缩略图
+            }
+        }
         /// <summary>重新应用界面字体和字幕字体（扩展字体扫描完之后调用一次）。</summary>
         public void ReapplyFonts()
         {
