@@ -1,0 +1,8 @@
+{
+  "modelVersion": "5.0.0",
+  "name": "kataru",
+  "version": "1.0.0",
+  "description": "KATARU — 有声书播放器 + 字幕（HarmonyOS 版）",
+  "dependencies": {},
+  "devDependencies": {}
+}

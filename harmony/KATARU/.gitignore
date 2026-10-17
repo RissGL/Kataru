@@ -1,0 +1,10 @@
+# HarmonyOS / DevEco 构建产物
+build/
+oh_modules/
+.hvigor/
+.idea/
+local.properties
+*.hap
+*.app
+.hvigor-cache/
+previewer/
