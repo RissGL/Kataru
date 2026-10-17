@@ -197,7 +197,8 @@ namespace AudioBookPlayer
             });
             Diagnostics.ActivityLog.StartWatchdog(
                 System.IO.Path.Combine(Core.AppPaths.DataDirectory, "activity.log"));
-            // 扩展字体文件夹：放进去的 .ttf / .otf 直接进字幕字体列表（后台扫，不挡启动）
+            // 扩展字体文件夹再补扫一次（设置里可能刚换过目录），并把字体重新应用一遍，
+            // 防止启动早期解析失败留下"显示的是 A 字体、实际用的是默认字体"的状态。
             System.Threading.Tasks.Task.Run(() =>
             {
                 var added = _viewModel.Overlay.ScanExtraFonts();
@@ -205,6 +206,8 @@ namespace AudioBookPlayer
                 {
                     Diagnostics.ActivityLog.Note($"扩展字体文件夹里加载了 {added} 个字体");
                 }
+
+                _viewModel.ReapplyFonts();
             });
             _viewModel.Start();
             _viewModel.LoadFromCommandLine(args);

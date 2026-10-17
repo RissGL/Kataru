@@ -765,6 +765,17 @@ namespace AudioBookPlayer.ViewModels
                     : name;
             }
         }
+        /// <summary>重新应用界面字体和字幕字体（扩展字体扫描完之后调用一次）。</summary>
+        public void ReapplyFonts()
+        {
+            ApplyUiFont();
+
+            // 字幕字体也重新解析一次（原来解析失败会保持默认）
+            if (!string.IsNullOrWhiteSpace(Overlay.FontFamilyName))
+            {
+                Overlay.FontFamilyName = Overlay.FontFamilyName;
+            }
+        }
         /// <summary>设置界面字体（供界面调用；传默认名等于恢复默认）。</summary>
         public void SetUiFont(string? name) => UiFontDisplay = name ?? string.Empty;
         /// <summary>界面字体是不是默认的。</summary>
@@ -2779,10 +2790,16 @@ namespace AudioBookPlayer.ViewModels
 
             Themes.ThemeService.Apply(_theme);
 
+            // 先把扩展字体文件夹扫一遍，再应用字体设置。
+            // 否则：选的字体在扩展文件夹里（没装系统）时，启动那一刻解析不到，
+            // WPF 会回退成默认字体 —— 界面上看着选了那个字体，实际却不是，
+            // 得手动切到别的字体再切回来才生效。
+            Overlay.ExtraFontsFolder = _settings.ExtraFontsFolder;
+            Overlay.ScanExtraFonts();
+
             Overlay.FontFamilyName = _settings.FontFamilyName;
             Overlay.FontSize = _settings.FontSize;
             Overlay.FontWeightName = _settings.FontWeightName;
-            Overlay.ExtraFontsFolder = _settings.ExtraFontsFolder;
             _uiFontName = _settings.UiFontFamilyName ?? string.Empty;
             ApplyUiFont();
             Overlay.ForegroundHex = _settings.ForegroundHex;

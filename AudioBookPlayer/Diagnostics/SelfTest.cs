@@ -1269,6 +1269,60 @@ namespace AudioBookPlayer.Diagnostics
                     colorViewModel.Overlay.OutlineHex == "#1A1A1A",
                     colorViewModel.Overlay.OutlineHex);
 
+                // 回归：启动加载设置时，必须先扫扩展字体文件夹再应用字体，
+                // 否则"扩展文件夹里的字体"在启动那一刻解析不到，会静默回退成默认字体。
+                var rebootFontsDir = Path.Combine(AppContext.BaseDirectory, "selftest-reboot-fonts");
+                if (Directory.Exists(rebootFontsDir))
+                {
+                    Directory.Delete(rebootFontsDir, true);
+                }
+
+                Directory.CreateDirectory(rebootFontsDir);
+
+                var rebootFontSource = new[]
+                {
+                    @"C:\Windows\Fonts\consola.ttf",
+                    @"C:\Windows\Fonts\arial.ttf",
+                }.FirstOrDefault(File.Exists);
+
+                if (rebootFontSource != null)
+                {
+                    File.Copy(rebootFontSource, Path.Combine(rebootFontsDir, Path.GetFileName(rebootFontSource)));
+
+                    var rebootSettingsPath = Path.Combine(AppContext.BaseDirectory, "selftest-reboot.json");
+                    var rebootSettings = new AppSettings
+                    {
+                        FilePath = rebootSettingsPath,
+                        ExtraFontsFolder = rebootFontsDir,
+                        UiFontFamilyName = "Consolas",
+                        FontFamilyName = "Consolas",
+                    };
+                    rebootSettings.Save();
+
+                    using var rebootViewModel = new MainViewModel(
+                        settings: AppSettings.Load(rebootSettingsPath),
+                        playbackStore: PlaybackStore.Load(Path.Combine(AppContext.BaseDirectory, "selftest-reboot-playback.json")));
+
+                    Check("启动时会先把扩展字体扫进来（否则重启后字体解析不到）",
+                        rebootViewModel.Overlay.FontChoices.Any(
+                            f => f.Equals("Consolas", StringComparison.OrdinalIgnoreCase)),
+                        $"字体数 {rebootViewModel.Overlay.FontChoices.Count}");
+
+                    Check("启动后界面字体解析到的是选中的那个",
+                        rebootViewModel.UiFontName.Equals("Consolas", StringComparison.OrdinalIgnoreCase),
+                        rebootViewModel.UiFontName);
+
+                    Check("启动后字幕字体也解析到选中的那个",
+                        rebootViewModel.Overlay.FontFamily.Source.Contains("Consolas", StringComparison.OrdinalIgnoreCase),
+                        rebootViewModel.Overlay.FontFamily.Source);
+
+                    if (File.Exists(rebootSettingsPath))
+                    {
+                        File.Delete(rebootSettingsPath);
+                    }
+                }
+
+                Directory.Delete(rebootFontsDir, true);
                 // 外部改（比如工具条上的 🎨）时槽位要同步
                 colorViewModel.Overlay.ForegroundHex = "#B3E5FC";
                 colorViewModel.Overlay.SyncColorSlots();
