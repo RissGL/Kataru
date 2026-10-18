@@ -725,15 +725,15 @@ namespace AudioBookPlayer.ViewModels
         }
         // ---------------- 播放页背景 ----------------
 
-        /// <summary>背景模式选项（值 / 显示名）。</summary>
-        public static IReadOnlyList<(string Key, string Label)> PlayerBackgroundModes { get; } = new[]
+        /// <summary>背景模式选项。</summary>
+        public static IReadOnlyList<Choice> PlayerBackgroundModes { get; } = new[]
         {
-            ("Default", "默认底色"),
-            ("CoverBlur", "封面模糊铺满"),
-            ("Image", "自定义图片"),
+            new Choice("Default", "默认底色"),
+            new Choice("CoverBlur", "封面模糊铺满"),
+            new Choice("Image", "自定义图片"),
         };
 
-        public IReadOnlyList<(string Key, string Label)> BackgroundModeOptions => PlayerBackgroundModes;
+        public IReadOnlyList<Choice> BackgroundModeOptions => PlayerBackgroundModes;
 
         private string _playerBackgroundMode = "Default";
         private string _playerBackgroundImage = string.Empty;

@@ -1397,6 +1397,36 @@ namespace AudioBookPlayer.Diagnostics
             {
                 Check("任务栏缩略图", false, ex.Message);
             }
+            // ============ 10h. 下拉选项 ============
+            Section("下拉框选项");
+
+            try
+            {
+                using var choiceViewModel = new MainViewModel(
+                    settings: AppSettings.Load(Path.Combine(AppContext.BaseDirectory, "selftest-choice.json")),
+                    playbackStore: PlaybackStore.Load(Path.Combine(AppContext.BaseDirectory, "selftest-choice-playback.json")));
+
+                var modes = choiceViewModel.BackgroundModeOptions;
+
+                Check("播放页背景有三个选项", modes.Count == 3, string.Join("、", modes.Select(m => m.Label)));
+
+                // 回归：不能再用值元组（元组运行时的字段叫 Item1/Item2，
+                // DisplayMemberPath="Label" 绑不上，下拉会全是空白）
+                var labelProperty = modes[0].GetType().GetProperty("Label");
+                var keyProperty = modes[0].GetType().GetProperty("Key");
+
+                Check("选项类型真的有 Key / Label 属性（元组会绑成空白）",
+                    labelProperty != null && keyProperty != null,
+                    modes[0].GetType().Name);
+
+                Check("每个选项的显示名都不为空",
+                    modes.All(m => !string.IsNullOrWhiteSpace(m.Label)),
+                    string.Join("、", modes.Select(m => m.Label)));
+            }
+            catch (Exception ex)
+            {
+                Check("下拉框选项", false, ex.Message);
+            }
             // ============ 11. 主题与资源 ============
             Section("界面主题与资源");
 
