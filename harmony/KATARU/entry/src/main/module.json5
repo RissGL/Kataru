@@ -22,11 +22,28 @@
           {
             "entities": ["entity.system.home"],
             "actions": ["action.system.home"]
+          },
+          {
+            // 从文件管理器「分享」进来的入口：选中音频/字幕后分享给 KATARU，
+            // 这是鸿蒙最自然的导入方式，比在 App 里翻目录好看得多
+            "entities": ["entity.system.default"],
+            "actions": ["ohos.want.action.sendData"],
+            "uris": [
+              { "type": "general.file" }
+            ]
           }
         ]
       }
     ],
     "requestPermissions": [
+      {
+        "name": "ohos.permission.FILE_ACCESS_PERSIST",
+        "reason": "$string:persist_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
       {
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING",
         "reason": "$string:bg_reason",

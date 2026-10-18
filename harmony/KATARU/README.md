@@ -3,7 +3,21 @@
 桌面版 KATARU（WPF/C#）的鸿蒙重写版。**不是移植**——C#/WPF 在鸿蒙上跑不了，
 这里是用 **ArkTS / ArkUI** 重写，但**算法和数据结构沿用桌面上那套**（桌面版已有 269 项自检覆盖）。
 
-> ✅ **当前状态：命令行构建通过**（`hvigor assembleHap` → BUILD SUCCESSFUL，产出 502 KB 的 HAP）
+> ✅ **当前状态：命令行构建通过**（`hvigor assembleHap` → BUILD SUCCESSFUL，产出 503 KB 的 HAP）
+>
+> **目标 API：HarmonyOS 6.0.0 / API 20**（`minAPIVersion = 60000020`），
+> 可在 HarmonyOS 6.1.0 / API 24 的真机（MIA-AL00）上安装运行。
+
+## 真机验证过的状态（MIA-AL00 / HarmonyOS 6.1 / API 24）
+
+- ✅ 安装成功、启动成功（`ability onCreate` / `window ready`，无崩溃）
+- ✅ 四个模式页：书库 / 播放 / 阅读 / 设置（底部 Tabs）
+- ✅ 书库扫描：一本书一个文件夹，自动配同名字幕，找封面（cover.png 等）
+- ✅ 字幕字号/字体可调
+- ⚠️ **公共 Download 目录不能直接读**：`/storage/media/100/local/files/Docs/Download`
+  连 shell 都 `mkdir: Permission denied`，App 也读不到。
+  所以改成：**用户用系统文件选择器选一次文件夹**，再用 `fileShare.persistPermission`
+  持久化授权，之后每次启动直接用（存在 preferences 里）。
 
 ## 当前进度
 
@@ -89,6 +103,8 @@ DevEco 右上角设备下拉选到你的手机 → 点绿色三角 **Run 'entry'
 | --- | --- |
 | DevEco Studio | `D:\HormanyOS\DevEco Studio`（26.0.0.851） |
 | SDK | `sdk\default\openharmony`（API 26，platformVersion 26.0.0） |
+| 目标版本 | `compatibleSdkVersion` / `targetSdkVersion` = **`6.0.0(20)`** |
+| 实测设备 | MIA-AL00 · HarmonyOS 6.1.0 · API 24 |
 | hvigor | 6.26.8 |
 | ohpm | 26.0.0.630 |
 | Node | 24.14.1（DevEco 自带） |
@@ -101,3 +117,71 @@ DevEco 右上角设备下拉选到你的手机 → 点绿色三角 **Run 'entry'
 - 图标复用桌面版的 app.ico（从 ICO 里取的 256×256 PNG 帧）
 - m4b 的章节 / 封面解析（桌面版 `MediaTagReader`）还没移植——AVPlayer 能直接播 m4b 音频，
   但读章节要靠自己解析 MP4 box，这块可以之后搬过来
+
+## 关于 SDK 版本配对（踩过的坑）
+
+`build-profile.json5` 里的 `compatibleSdkVersion` / `targetSdkVersion` **不是随便写数字就行**，
+hvigor 会拿它跟已安装的 SDK 做**精确配对校验**。本机实测：
+
+| 写法 | 结果 |
+| --- | --- |
+| `24` / `26`（纯数字） | ❌ Schema validate failed |
+| `"6.0.0(24)"` | ❌ platform version 与 API version 不匹配 |
+| `"6.1.0(24)"` | ❌ 同上 |
+| `"6.1.0(26)"` | ❌ 同上 |
+| `"26.0.0(26)"` | ❌ 同上 |
+| **`"6.0.0(20)"`** | ✅ BUILD SUCCESSFUL |
+
+也就是说：**只有 SDK 认得的「平台版本(API 等级)」组合才能用**。
+想换成别的版本，得先用 DevEco 的 SDK Manager 把对应的 SDK 装上。
+
+## 安装到真机必须签名
+
+`bm install` 报 `error: no signature file (code:9568320)` = HAP 未签名。
+在 DevEco 中文版里：`文件(File) → 项目结构(Project Structure) → 签名配置(Signing Configs)`
+→ 勾选「**自动生成签名**」（也可直接点报错里的「**打开签名配置**」链接）。
+
+前置条件：华为账号已登录 + **已实名认证**，且手机已连接（自动签名要把设备 UDID 写进 profile）。
+## 手机上怎么放书（重要）
+
+1. 用手机自带「文件管理」在 **Download** 下新建文件夹 **KATARU Book**（USB 连电脑传也可以）
+2. 里面一个书一个文件夹，例如：
+   ```
+   Download/KATARU Book/化物語 上/01 ひたぎクラブ.mp3
+   Download/KATARU Book/化物語 上/01 ひたぎクラブ.srt
+   Download/KATARU Book/化物語 上/cover.png
+   ```
+3. 打开 App → **设置 → 选择书库文件夹** → 选到 `KATARU Book` → 授权
+4. 回到**书库**，会自动扫描出书；点书进入播放
+
+> 为什么必须手动选一次：鸿蒙把公共下载目录保护起来了，第三方 App 拿不到
+> 「直接按路径读」的权限，只能用系统选择器授权。选一次就记住。
+
+## 还没做
+
+- **灵动岛 / 实况窗**：需要 LiveViewKit + **申请正式权限**（Huawei 侧审批），
+  而且必须真机调试。单独一轮做。
+- 双语对照（多语言轨道）：`SubtitleLanguage.ets` 已就绪，阅读页还没接。
+- 后台播放 / 锁屏播控（AVSession）、进度记忆（preferences 已用上，播放进度还没存）。
+## 为什么是"导入式书库"（重要）
+
+鸿蒙 6.1 上第三方 App **读不到公共 Download 目录**，实测三条路都堵死：
+
+| 尝试 | 结果 |
+| --- | --- |
+| 按路径直读 `/storage/media/100/local/files/Docs/Download/...` | `code 13900001` Operation not permitted |
+| 申请 `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | `authResults = 2`（系统拒绝，受限权限） |
+| 文件选择器「选文件夹」`DocumentSelectMode.FOLDER` | 「该功能暂不支持」（该机型未开放） |
+| shell 里 `mkdir` 该目录 | Permission denied |
+
+**所以只有一条路**：用系统选择器选**具体文件**（这个所有机型都支持），
+App 用 `fileShare.persistPermission` 持久化授权，把 URI 存进 preferences。
+
+### 用户操作
+
+1. 书库页点 **「导入书本」**
+2. 一次多选这本书的文件：**音频 (.m4b/.mp3) + 字幕 (.srt) + 封面 (png)**
+3. 自动配对（同名 / 同名+语言后缀）并存下来
+4. 之后直接点书就播放，重启也不丢（URI 授权已持久化）
+
+> 这是鸿蒙平台限制，不是偷懒。桌面版能扫目录是因为 Windows 桌面没有这层沙箱。

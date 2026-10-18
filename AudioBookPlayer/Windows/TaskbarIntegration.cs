@@ -21,12 +21,21 @@ namespace AudioBookPlayer.Windows
     public sealed class TaskbarIntegration : IDisposable
     {
         private const int WmCommand = 0x0111;
+
+        /// <summary>DWM 来要缩略图时发的消息 —— 必须在响应它的时候才能设置缩略图。</summary>
+        private const int WmDwmSendIconicThumbnail = 0x0323;
         private const int ThbnClicked = 0x1800;
 
         private const uint ButtonPrevious = 1;
         private const uint ButtonPlayPause = 2;
         private const uint ButtonNext = 3;
 
+        // 从 SDK 的 dwmapi.h 查到（别凭记忆写）：
+        //   DWMWA_FORCE_ICONIC_REPRESENTATION = 7  → 强制这个窗口用"静态图标缩略图"
+        //   DWMWA_HAS_ICONIC_BITMAP           = 10 → 声明我们提供了一张静态图
+        // 只设 10 是不够的：官方注释说它只在"没有更好的缩略图"时生效，
+        // 也就是说实时预览优先 —— 所以必须同时把 7 打开，否则永远看到的是窗口实时截图。
+        private const int DwmwaForceIconicRepresentation = 7;
         private const int DwmwaHasIconicBitmap = 10;
 
         private static readonly int TaskbarButtonCreatedMessage =
@@ -186,10 +195,22 @@ namespace AudioBookPlayer.Windows
                 // 忽略
             }
 
-            // 自定义缩略图：没有封面就不设，Windows 会退回显示窗口实时预览
-            if (renderThumbnail != null && hasCover)
+            // 只声明"我有一张静态图"，具体取图由 DWM 发 WM_DWMSENDICONICTHUMBNAIL 来要
+            try
             {
-                SetIconicThumbnail(renderThumbnail);
+                var flag = hasCover ? 1 : 0;
+                NativeMethods.DwmSetWindowAttribute(_handle, DwmwaHasIconicBitmap, ref flag, sizeof(int));
+                NativeMethods.DwmSetWindowAttribute(_handle, DwmwaForceIconicRepresentation, ref flag, sizeof(int));
+
+                if (hasCover)
+                {
+                    // 封面 / 章节变了：让 DWM 重新来要一次图
+                    NativeMethods.DwmInvalidateIconicBitmaps(_handle);
+                }
+            }
+            catch (Exception)
+            {
+                // 忽略
             }
         }
 
@@ -267,6 +288,15 @@ namespace AudioBookPlayer.Windows
                 return IntPtr.Zero;
             }
 
+            // DWM 说"给我缩略图"——只有这时候调 DwmSetIconicThumbnail 才有效，
+            // 提前主动调用会 E_INVALIDARG（这个坑踩了一轮）
+            if (msg == WmDwmSendIconicThumbnail)
+            {
+                RenderIconicThumbnail();
+                handled = true;
+                return IntPtr.Zero;
+            }
+
             if (msg == WmCommand && ((long)wParam >> 16) == ThbnClicked)
             {
                 switch ((uint)((long)wParam & 0xFFFF))
@@ -302,8 +332,7 @@ namespace AudioBookPlayer.Windows
                 _taskbar.HrInit();
 
                 // 允许我们自己提供缩略图（封面）
-                var allowIconicBitmap = 1;
-                NativeMethods.DwmSetWindowAttribute(_handle, DwmwaHasIconicBitmap, ref allowIconicBitmap, sizeof(int));
+
 
                 CreateIcons();
                 AddButtons();
@@ -427,39 +456,112 @@ namespace AudioBookPlayer.Windows
             Flags = ThumbnailButtonFlags.Enabled,
         };
 
-        /// <summary>用 DWM 设置自定义缩略图（画一张封面卡片）。</summary>
+        /// <summary>
+        /// 用 DWM 设置自定义缩略图（画一张封面卡片）。
+        ///
+        /// 关键：DWM 只接受 **32 位、预乘 alpha、自上而下** 的 DIB。
+        /// Bitmap.GetHbitmap() 是自下而上 + 直通 alpha，直接传进去会 E_INVALIDARG，
+        /// 所以这里自己 CreateDIBSection，再把 PArgb（预乘）像素拷进去。
+        /// </summary>
+        private void RenderIconicThumbnail()
+        {
+            var render = _pendingRender;
+            if (render == null || !_pendingHasCover)
+            {
+                return;
+            }
+
+            SetIconicThumbnail(render);
+        }
+
         private void SetIconicThumbnail(Action<Graphics, int, int> render)
         {
             const int width = 320;
             const int height = 180;
 
+            IntPtr dib = IntPtr.Zero;
+
             try
             {
-                using var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                // 用 Format32bppPArgb（预乘 alpha）
+                using (var bitmap = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb))
+                {
+                    using (var graphics = Graphics.FromImage(bitmap))
+                    {
+                        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                        graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+                        render(graphics, width, height);
+                    }
 
-                using (var graphics = Graphics.FromImage(bitmap))
-                {
-                    graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                    graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-                    render(graphics, width, height);
+                    var info = new NativeMethods.BITMAPINFO
+                    {
+                        bmiHeader = new NativeMethods.BITMAPINFOHEADER
+                        {
+                            biSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf<NativeMethods.BITMAPINFOHEADER>(),
+                            biWidth = width,
+                            biHeight = -height, // 负数 = 自上而下
+                            biPlanes = 1,
+                            biBitCount = 32,
+                            biCompression = 0, // BI_RGB
+                            biSizeImage = (uint)(width * height * 4),
+                        },
+                        bmiColors = new uint[3],
+                    };
+
+                    dib = NativeMethods.CreateDIBSection(IntPtr.Zero, ref info, NativeMethods.DIB_RGB_COLORS,
+                        out var bits, IntPtr.Zero, 0);
+
+                    if (dib == IntPtr.Zero || bits == IntPtr.Zero)
+                    {
+                        Status = "CreateDIBSection 失败";
+                        Diagnostics.ActivityLog.WriteNow(Status);
+                        return;
+                    }
+
+                    var data = bitmap.LockBits(
+                        new Rectangle(0, 0, width, height),
+                        System.Drawing.Imaging.ImageLockMode.ReadOnly,
+                        System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+
+                    try
+                    {
+                        for (var row = 0; row < height; row++)
+                        {
+                            var source = IntPtr.Add(data.Scan0, row * data.Stride);
+                            var target = IntPtr.Add(bits, row * width * 4);
+                            CopyMemory(target, source, (UIntPtr)(uint)(width * 4));
+                        }
+                    }
+                    finally
+                    {
+                        bitmap.UnlockBits(data);
+                    }
                 }
 
-                var hBitmap = bitmap.GetHbitmap(Color.FromArgb(0));
-                try
-                {
-                    NativeMethods.DwmSetIconicThumbnail(_handle, hBitmap, 0);
-                }
-                finally
-                {
-                    NativeMethods.DeleteObject(hBitmap);
-                }
+                var allow = 1;
+                NativeMethods.DwmSetWindowAttribute(_handle, DwmwaHasIconicBitmap, ref allow, sizeof(int));
+                NativeMethods.DwmSetWindowAttribute(_handle, DwmwaForceIconicRepresentation, ref allow, sizeof(int));
+
+                var hr = NativeMethods.DwmSetIconicThumbnail(_handle, dib, 0);
+                Status = hr == 0 ? "已设置封面缩略图" : $"DwmSetIconicThumbnail 失败：0x{hr:X8}";
+                Diagnostics.ActivityLog.WriteNow(Status);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                // 忽略：失败时会退回窗口实时预览
+                Status = $"缩略图异常：{ex.Message}";
+                Diagnostics.ActivityLog.WriteNow(Status);
+            }
+            finally
+            {
+                if (dib != IntPtr.Zero)
+                {
+                    NativeMethods.DeleteObject(dib);
+                }
             }
         }
 
+        [DllImport("kernel32.dll", EntryPoint = "RtlMoveMemory", SetLastError = false)]
+        private static extern void CopyMemory(IntPtr destination, IntPtr source, UIntPtr length);
         // ==================== COM 接口 ====================
 
         [ComImport]

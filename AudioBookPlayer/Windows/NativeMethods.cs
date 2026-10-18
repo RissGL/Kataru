@@ -104,11 +104,54 @@ namespace AudioBookPlayer.Windows
         [DllImport("dwmapi.dll", PreserveSig = true)]
         internal static extern int DwmSetIconicThumbnail(IntPtr hwnd, IntPtr hBitmap, uint flags);
 
+        /// <summary>让 DWM 丢掉缓存的缩略图，下次会重新向窗口要（内容变了时调用）。</summary>
+        [DllImport("dwmapi.dll", PreserveSig = true)]
+        internal static extern int DwmInvalidateIconicBitmaps(IntPtr hwnd);
+
         [DllImport("user32.dll", SetLastError = true)]
         internal static extern bool DestroyIcon(IntPtr hIcon);
 
         [DllImport("gdi32.dll", SetLastError = true)]
         internal static extern bool DeleteObject(IntPtr hObject);
+        /// <summary>
+        /// 建一块 32 位、自上而下的 DIB 段（DWM 的缩略图必须是这种格式：
+        /// 预乘 alpha + top-down，下面 biHeight 取负数就是 top-down）。
+        /// </summary>
+        [DllImport("gdi32.dll", SetLastError = true)]
+        internal static extern IntPtr CreateDIBSection(
+            IntPtr hdc,
+            ref BITMAPINFO pbmi,
+            uint usage,
+            out IntPtr ppvBits,
+            IntPtr hSection,
+            uint offset);
+
+        internal const uint DIB_RGB_COLORS = 0;
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct BITMAPINFOHEADER
+        {
+            public uint biSize;
+            public int biWidth;
+            public int biHeight;
+            public ushort biPlanes;
+            public ushort biBitCount;
+            public uint biCompression;
+            public uint biSizeImage;
+            public int biXPelsPerMeter;
+            public int biYPelsPerMeter;
+            public uint biClrUsed;
+            public uint biClrImportant;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct BITMAPINFO
+        {
+            public BITMAPINFOHEADER bmiHeader;
+
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 3)]
+            public uint[] bmiColors;
+        }
         /// <summary>注册一条全局唯一的自定义消息（单实例唤醒用）。</summary>
         [DllImport("user32.dll", EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode, SetLastError = true)]
         internal static extern int RegisterWindowMessage(string lpString);

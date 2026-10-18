@@ -1,24 +1,36 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\30205\\.ohos\\config\\default_KATARU_HY_x7opbh4WH65pkRqSqufvQmjTnfMUoWjXSBYzbWkw=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B31F55043E24F96C7E66485B2844C5A14702CF81F87FC3D1EFC5EA08881C898172444CA76A511C2",
+          "profile": "C:\\Users\\30205\\.ohos\\config\\default_KATARU_HY_x7opbh4WH65pkRqSqufvQmjTnfMUoWjXSBYzbWkw=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\30205\\.ohos\\config\\default_KATARU_HY_x7opbh4WH65pkRqSqufvQmjTnfMUoWjXSBYzbWkw=.p12",
+          "storePassword": "0000001BF94F063CAFBC65EAB26512BEE33C9CA259093DFA15F91B087E18D374F97F28D96AF1D48112605E"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
         "signingConfig": "default",
-        "compatibleSdkVersion": "5.0.0(12)",
-        "targetSdkVersion": "5.0.0(12)",
-        "runtimeOS": "HarmonyOS",
-        "buildOption": {
-          "strictMode": {
-            "caseSensitiveCheck": true,
-            "useNormalizedOHMUrl": true
-          }
-        }
+        "compatibleSdkVersion": "6.0.0(20)",
+        "targetSdkVersion": "6.0.0(20)",
+        "runtimeOS": "HarmonyOS"
       }
     ],
     "buildModeSet": [
-      { "name": "debug" },
-      { "name": "release" }
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
     ]
   },
   "modules": [
@@ -26,7 +38,12 @@
       "name": "entry",
       "srcPath": "./entry",
       "targets": [
-        { "name": "default", "applyToProducts": ["default"] }
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
       ]
     }
   ]

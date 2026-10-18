@@ -3,6 +3,8 @@
     { "name": "module_desc", "value": "KATARU 入口" },
     { "name": "EntryAbility_desc", "value": "KATARU" },
     { "name": "EntryAbility_label", "value": "KATARU" },
-    { "name": "bg_reason", "value": "后台继续播放有声书" }
+    { "name": "bg_reason", "value": "后台继续播放有声书" },
+    { "name": "download_reason", "value": "读取 Download/KATARU Book 里的有声书和字幕" },
+    { "name": "persist_reason", "value": "记住你选的书库文件夹，下次不用再选" }
   ]
 }
