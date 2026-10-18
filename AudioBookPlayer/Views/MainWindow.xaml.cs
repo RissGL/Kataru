@@ -119,10 +119,7 @@ namespace AudioBookPlayer.Views
                 var duration = viewModel.DurationSeconds;
                 taskbar.SetProgress(duration > 0 ? viewModel.PositionSeconds / duration : -1);
 
-                taskbar.Update(
-                    viewModel.TaskbarTooltip,
-                    viewModel.RenderTaskbarThumbnail,
-                    !string.IsNullOrEmpty(viewModel.TaskbarCoverPath));
+                taskbar.Update(viewModel.TaskbarTooltip);
             }
             catch (Exception)
             {

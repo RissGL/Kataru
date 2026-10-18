@@ -1384,19 +1384,6 @@ namespace AudioBookPlayer.Diagnostics
                 Check("没有播放时提示就是 KATARU", barViewModel.TaskbarTooltip == "KATARU",
                     barViewModel.TaskbarTooltip);
 
-                // 缩略图能画出来（不抛异常，且不是全黑）
-                using (var bitmap = new System.Drawing.Bitmap(320, 180))
-                {
-                    using (var graphics = System.Drawing.Graphics.FromImage(bitmap))
-                    {
-                        barViewModel.RenderTaskbarThumbnail(graphics, 320, 180);
-                    }
-
-                    var corner = bitmap.GetPixel(4, 4);
-                    Check("缩略图绘制不抛异常且有底色",
-                        corner.A > 0,
-                        $"角落颜色 {corner}");
-                }
 
                 // 任务栏集成对象能建、能挂（没有真实任务栏也不该炸）
                 var taskbar = new Windows.TaskbarIntegration(System.Windows.Application.Current.MainWindow
