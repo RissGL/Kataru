@@ -723,6 +723,164 @@ namespace AudioBookPlayer.ViewModels
             OnPropertyChanged(nameof(ZoomText));
             OnPropertyChanged(nameof(IsZoomed));
         }
+        // ---------------- 播放页背景 ----------------
+
+        /// <summary>背景模式选项（值 / 显示名）。</summary>
+        public static IReadOnlyList<(string Key, string Label)> PlayerBackgroundModes { get; } = new[]
+        {
+            ("Default", "默认底色"),
+            ("CoverBlur", "封面模糊铺满"),
+            ("Image", "自定义图片"),
+        };
+
+        public IReadOnlyList<(string Key, string Label)> BackgroundModeOptions => PlayerBackgroundModes;
+
+        private string _playerBackgroundMode = "Default";
+        private string _playerBackgroundImage = string.Empty;
+        private System.Windows.Media.ImageBrush? _playerBackgroundBrush;
+
+        /// <summary>播放页背景模式。</summary>
+        public string PlayerBackgroundMode
+        {
+            get => _playerBackgroundMode;
+            set
+            {
+                var mode = string.IsNullOrWhiteSpace(value) ? "Default" : value.Trim();
+                if (!SetProperty(ref _playerBackgroundMode, mode))
+                {
+                    return;
+                }
+
+                _settings.PlayerBackgroundMode = mode;
+                OnPropertyChanged(nameof(IsCustomBackground));
+                OnPropertyChanged(nameof(HasPlayerBackground));
+                RebuildPlayerBackground();
+                PersistSettings();
+            }
+        }
+
+        /// <summary>自定义背景图片。</summary>
+        public string PlayerBackgroundImage
+        {
+            get => _playerBackgroundImage;
+            set
+            {
+                if (!SetProperty(ref _playerBackgroundImage, value ?? string.Empty))
+                {
+                    return;
+                }
+
+                _settings.PlayerBackgroundImage = _playerBackgroundImage;
+                RebuildPlayerBackground();
+                PersistSettings();
+            }
+        }
+
+        public bool IsCustomBackground => _playerBackgroundMode == "Image";
+
+        public bool HasPlayerBackground => _playerBackgroundMode != "Default" && _playerBackgroundBrush != null;
+
+        /// <summary>播放页背景画刷（ImageBrush，已经做过模糊处理）。</summary>
+        public System.Windows.Media.ImageBrush? PlayerBackgroundBrush
+        {
+            get => _playerBackgroundBrush;
+            private set
+            {
+                _playerBackgroundBrush = value;
+                OnPropertyChanged(nameof(PlayerBackgroundBrush));
+                OnPropertyChanged(nameof(HasPlayerBackground));
+            }
+        }
+
+        /// <summary>按当前设置重建背景画刷。</summary>
+        private void RebuildPlayerBackground()
+        {
+            var mode = _playerBackgroundMode;
+
+            if (mode == "Default")
+            {
+                PlayerBackgroundBrush = null;
+                return;
+            }
+
+            var source = mode == "Image" ? _playerBackgroundImage : CurrentCoverPathForBackground();
+            if (string.IsNullOrWhiteSpace(source) || !System.IO.File.Exists(source))
+            {
+                PlayerBackgroundBrush = null;
+                return;
+            }
+
+            try
+            {
+                var bitmap = CreateBlurredImage(source);
+                if (bitmap == null)
+                {
+                    PlayerBackgroundBrush = null;
+                    return;
+                }
+
+                var brush = new System.Windows.Media.ImageBrush(bitmap)
+                {
+                    Stretch = System.Windows.Media.Stretch.UniformToFill,
+                    AlignmentX = System.Windows.Media.AlignmentX.Center,
+                    AlignmentY = System.Windows.Media.AlignmentY.Center,
+                };
+
+                brush.Freeze();
+                PlayerBackgroundBrush = brush;
+            }
+            catch (Exception)
+            {
+                PlayerBackgroundBrush = null;
+            }
+        }
+
+        /// <summary>封面模糊模式用哪张图：优先当前书的封面。</summary>
+        private string? CurrentCoverPathForBackground() => SelectedBook?.CoverPath;
+
+        /// <summary>
+        /// 做一张"糊掉"的图：先缩到很小，再用双三次插值放大回来 —— 视觉上就是高斯模糊，
+        /// 但比真的跑模糊快得多（这个技巧做背景足够）。
+        /// </summary>
+        private static System.Windows.Media.Imaging.BitmapImage? CreateBlurredImage(string path)
+        {
+            using var source = System.Drawing.Image.FromFile(path);
+
+            const int smallWidth = 40;
+            var smallHeight = Math.Max(1, (int)(smallWidth * (double)source.Height / source.Width));
+
+            using var small = new System.Drawing.Bitmap(smallWidth, smallHeight);
+            using (var graphics = System.Drawing.Graphics.FromImage(small))
+            {
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+                graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                graphics.DrawImage(source, 0, 0, smallWidth, smallHeight);
+            }
+
+            const int bigWidth = 1280;
+            var bigHeight = Math.Max(1, (int)(bigWidth * (double)small.Height / small.Width));
+
+            using var big = new System.Drawing.Bitmap(bigWidth, bigHeight);
+            using (var graphics = System.Drawing.Graphics.FromImage(big))
+            {
+                graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                graphics.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                graphics.DrawImage(small, 0, 0, bigWidth, bigHeight);
+            }
+
+            // 转成 WPF 的位图（走 PNG 内存流，OnLoad 立刻读入，不占文件句柄）
+            using var stream = new System.IO.MemoryStream();
+            big.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
+            stream.Position = 0;
+
+            var image = new System.Windows.Media.Imaging.BitmapImage();
+            image.BeginInit();
+            image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            image.StreamSource = stream;
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
         // ---------------- 界面字体 ----------------
 
         /// <summary>内置默认界面字体（和主题资源里的初值一致）。</summary>
@@ -745,7 +903,9 @@ namespace AudioBookPlayer.ViewModels
                 ApplyUiFont();
                 OnPropertyChanged(nameof(UiFontDisplay));
                 OnPropertyChanged(nameof(IsDefaultUiFont));
-                _settings.UiFontFamilyName = name;
+                _settings.PlayerBackgroundMode = _playerBackgroundMode;
+            _settings.PlayerBackgroundImage = _playerBackgroundImage;
+            _settings.UiFontFamilyName = name;
                 PersistSettings();
             }
         }
@@ -1750,6 +1910,9 @@ namespace AudioBookPlayer.ViewModels
 
             ResetPositionDisplay();
             LoadEmbeddedChapters(entry);
+
+            // 换章 / 换书后封面可能变了，重建播放页背景
+            RebuildPlayerBackground();
 
             if (entry.SubtitleTracks.Count > 0)
             {
@@ -2821,6 +2984,8 @@ namespace AudioBookPlayer.ViewModels
             Overlay.FontFamilyName = _settings.FontFamilyName;
             Overlay.FontSize = _settings.FontSize;
             Overlay.FontWeightName = _settings.FontWeightName;
+            _playerBackgroundMode = string.IsNullOrWhiteSpace(_settings.PlayerBackgroundMode) ? "Default" : _settings.PlayerBackgroundMode;
+            _playerBackgroundImage = _settings.PlayerBackgroundImage ?? string.Empty;
             _uiFontName = _settings.UiFontFamilyName ?? string.Empty;
             ApplyUiFont();
             Overlay.ForegroundHex = _settings.ForegroundHex;

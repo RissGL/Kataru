@@ -238,6 +238,44 @@ namespace AudioBookPlayer.Views
                 apply(text.Trim());
             }
         }
+        /// <summary>选一张自定义背景图。</summary>
+        private void OnPickBackgroundImageClick(object sender, RoutedEventArgs e)
+        {
+            var viewModel = ViewModel;
+            if (viewModel == null)
+            {
+                return;
+            }
+
+            var dialog = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "选择播放页背景图片",
+                Filter = "图片|*.png;*.jpg;*.jpeg;*.bmp;*.gif|所有文件|*.*",
+                CheckFileExists = true,
+            };
+
+            if (dialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            viewModel.PlayerBackgroundImage = dialog.FileName;
+            viewModel.PlayerBackgroundMode = "Image";
+        }
+
+        /// <summary>清除自定义背景图。</summary>
+        private void OnClearBackgroundImageClick(object sender, RoutedEventArgs e)
+        {
+            var viewModel = ViewModel;
+            if (viewModel == null)
+            {
+                return;
+            }
+
+            viewModel.PlayerBackgroundImage = string.Empty;
+            viewModel.PlayerBackgroundMode = "Default";
+        }
+
         /// <summary>界面字体恢复默认。</summary>
         private void OnResetUiFontClick(object sender, RoutedEventArgs e)
         {

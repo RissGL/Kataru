@@ -396,6 +396,13 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
+                    <!-- 播放页背景：封面模糊 / 自定义图片（最底层，上面压一层暗色保证文字可读） -->
+                    <Grid Grid.Column="0" Grid.ColumnSpan="2"
+                          Visibility="{Binding HasPlayerBackground, Converter={StaticResource BoolToVisibility}}">
+                        <Rectangle Fill="{Binding PlayerBackgroundBrush}" />
+                        <Rectangle Fill="#B3000000" />
+                    </Grid>
+
                     <!-- 文件内章节（m4b 的 chpl），点了直接跳过去 -->
                     <Border Grid.Column="1" Width="260" Margin="0,20,20,20" Padding="12"
                             Background="{DynamicResource CardBackgroundBrush}"
@@ -608,6 +615,28 @@
                                           IsChecked="{Binding RememberPlaybackPosition}" />
                                 <CheckBox Content="启动时自动恢复上次听的那一章" Margin="0,10,0,0"
                                           IsChecked="{Binding ResumeLastOnStartup}" />
+
+                                <TextBlock Text="播放页背景" Style="{StaticResource SettingsLabelStyle}" Margin="0,18,0,6" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox Grid.Column="0"
+                                              ItemsSource="{Binding BackgroundModeOptions}"
+                                              DisplayMemberPath="Label"
+                                              SelectedValuePath="Key"
+                                              SelectedValue="{Binding PlayerBackgroundMode, Mode=TwoWay}" />
+                                    <Button Grid.Column="1" Content="选择图片…" Padding="10,4" Margin="8,0,0,0"
+                                            Click="OnPickBackgroundImageClick"
+                                            Visibility="{Binding IsCustomBackground, Converter={StaticResource BoolToVisibility}}" />
+                                    <Button Grid.Column="2" Content="清除" Padding="10,4" Margin="8,0,0,0"
+                                            Click="OnClearBackgroundImageClick"
+                                            Visibility="{Binding IsCustomBackground, Converter={StaticResource BoolToVisibility}}" />
+                                </Grid>
+                                <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                           Text="「封面模糊铺满」用当前书封面糊掉做底图；「自定义图片」选一张自己的图。文字区域会自动压暗以保证可读。" />
                             </StackPanel>
                         </Border>
 
