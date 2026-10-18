@@ -493,6 +493,18 @@ namespace AudioBookPlayer.Windows
                         render(graphics, width, height);
                     }
 
+                    // 调试：把实际渲染出来的图存一份，便于确认是"画错了"还是"拷贝错了"
+                    try
+                    {
+                        var debugPath = System.IO.Path.Combine(
+                            Core.AppPaths.DataDirectory, "taskbar-thumbnail-debug.png");
+                        bitmap.Save(debugPath, System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    catch (Exception)
+                    {
+                        // 忽略
+                    }
+
                     var info = new NativeMethods.BITMAPINFO
                     {
                         bmiHeader = new NativeMethods.BITMAPINFOHEADER
