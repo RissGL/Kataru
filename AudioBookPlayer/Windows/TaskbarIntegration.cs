@@ -493,17 +493,6 @@ namespace AudioBookPlayer.Windows
                         render(graphics, width, height);
                     }
 
-                    // 调试：把实际渲染出来的图存一份，便于确认是"画错了"还是"拷贝错了"
-                    try
-                    {
-                        var debugPath = System.IO.Path.Combine(
-                            Core.AppPaths.DataDirectory, "taskbar-thumbnail-debug.png");
-                        bitmap.Save(debugPath, System.Drawing.Imaging.ImageFormat.Png);
-                    }
-                    catch (Exception)
-                    {
-                        // 忽略
-                    }
 
                     var info = new NativeMethods.BITMAPINFO
                     {
@@ -550,11 +539,18 @@ namespace AudioBookPlayer.Windows
                     }
                 }
 
+                // 先声明"我有静态图"，然后提交
                 var allow = 1;
                 NativeMethods.DwmSetWindowAttribute(_handle, DwmwaHasIconicBitmap, ref allow, sizeof(int));
-                NativeMethods.DwmSetWindowAttribute(_handle, DwmwaForceIconicRepresentation, ref allow, sizeof(int));
 
                 var hr = NativeMethods.DwmSetIconicThumbnail(_handle, dib, 0);
+
+                // 关键：只有提交成功才"强制使用静态图"。
+                // 强制 + 提交失败 = 任务栏显示一张空白卡片（比不好看更糟），
+                // 所以失败时把强制关掉，回落到窗口实时预览。
+                var force = hr == 0 ? 1 : 0;
+                NativeMethods.DwmSetWindowAttribute(_handle, DwmwaForceIconicRepresentation, ref force, sizeof(int));
+
                 Status = hr == 0 ? "已设置封面缩略图" : $"DwmSetIconicThumbnail 失败：0x{hr:X8}";
                 Diagnostics.ActivityLog.WriteNow(Status);
             }

@@ -123,6 +123,27 @@ namespace AudioBookPlayer.Diagnostics
                         viewModel.CurrentMode = AppMode.Settings;
                     }
 
+                    // --taskbar-thumbnail out.png：把"任务栏缩略图"直接渲染成文件（不需要任务栏）
+                    var thumbPath = GetOption(args, "--taskbar-thumbnail");
+                    if (!string.IsNullOrEmpty(thumbPath))
+                    {
+                        try
+                        {
+                            using var bmp = new System.Drawing.Bitmap(320, 180, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+                            using (var g = System.Drawing.Graphics.FromImage(bmp))
+                            {
+                                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                                viewModel.RenderTaskbarThumbnail(g, 320, 180);
+                            }
+
+                            bmp.Save(thumbPath, System.Drawing.Imaging.ImageFormat.Png);
+                            Console.WriteLine($"[diag] taskbar thumbnail -> {thumbPath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("[diag] taskbar thumbnail failed: " + ex.Message);
+                        }
+                    }
                     // --ui-font SimSun：窗口已经建好之后再换界面字体（复现"运行时改字体没反应"）
                     var uiFont = GetOption(args, "--ui-font");
                     if (!string.IsNullOrEmpty(uiFont))
