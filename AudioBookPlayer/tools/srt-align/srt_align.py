@@ -400,7 +400,17 @@ def build_anchors(audio_path: str, media_dir: str, end_time: float):
         })
     if anchors:
         anchors[-1]["end"] = max(anchors[-1]["end"], end_time)
-    return anchors
+
+    # 同一章被拆成多个锚点（例如 第1章・1 / ・2 …）时合并成一段，
+    # 否则一章的文本会被反复对齐到同一批句子上
+    merged = []
+    for a in anchors:
+        if merged and a["key"][0] != "unknown" and a["key"] == merged[-1]["key"]:
+            merged[-1]["end"] = max(merged[-1]["end"], a["end"])
+        else:
+            merged.append(dict(a))
+    merged[-1]["end"] = max(merged[-1]["end"], end_time)
+    return merged
 
 
 def map_chapters(anchors, chapters):
@@ -723,6 +733,10 @@ def main(argv=None):
 
     # ---- 体检 ----
     total_sent = sum(len(c["sentences"]) for _, c in pairs)
+    if not cues:
+        print()
+        print("没有生成任何字幕：检查章节是否对上、音频章节是否覆盖了 SRT 的时间区间")
+        return 3
     gaps = [(b["start"] - a["end"]) for a, b in zip(cues, cues[1:])]
     big_gaps = [g for g in gaps if g > 20]
     dense = [c for c in cues if len(c["text"]) / max(0.5, c["end"] - c["start"]) > 14]
