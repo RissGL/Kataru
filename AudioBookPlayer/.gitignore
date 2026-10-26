@@ -1,0 +1,20 @@
+# 构建产物
+bin/
+obj/
+*.user
+
+# 运行时数据 / 测试残留
+testdata-*/
+selftest-report.txt
+err.txt
+*.error.txt
+
+# 截图与自检产物（体积大、可重新生成）
+ui-*.png
+thumb-*.png
+
+# 字幕生成产物（含译文正文，不入库）
+out/
+__pycache__/
+_gen*.srt
+_report*.txt
