@@ -136,6 +136,8 @@ def main():
     ap.add_argument("folder")
     ap.add_argument("--limit", type=float, default=0, help="只测前 N 分钟（调试用）")
     ap.add_argument("--chapters", default="from-audio", choices=["from-audio", "from-markers"])
+    ap.add_argument("--embed", default=None, help="启用句向量语义对齐")
+    ap.add_argument("--sim-weight", type=float, default=2.0)
     args = ap.parse_args()
 
     ja, zh, audio = find_triplet(args.folder)
@@ -166,6 +168,8 @@ def main():
 
     out = os.path.join(tmpdir, "out.srt")
     argv = [audio or args.folder, "--srt", ja, "--book", fake_epub, "--out", out]
+    if args.embed:
+        argv += ["--embed", args.embed, "--sim-weight", str(args.sim_weight)]
     if args.limit:
         # 用限长后的 srt 才能和 zh_cues 对齐
         ja_cues = [c for c in S.parse_srt(ja) if c["start"] <= args.limit * 60]

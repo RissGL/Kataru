@@ -18,3 +18,11 @@ out/
 __pycache__/
 _gen*.srt
 _report*.txt
+
+# 离线工具的运行环境与模型（5 GB 级，按需重装）
+tools/srt-align/.venv/
+tools/srt-align/_models/
+tools/srt-align/_*.py
+tools/srt-align/_*.log*
+tools/srt-align/*.whl
+tools/srt-align/*.whl.part

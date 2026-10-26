@@ -522,7 +522,25 @@ def proportional_pairs(anchors, chapters):
 
 # ------------------------------------------------------------------ 对齐
 
-def align_block(segments, sentences, ratio, cps, lead_in=4, lead_out=4, lead_sent=3):
+def split_block(segments, sentences, ratio, max_segs=400):
+    """把一大块按比例切成若干小块，限制相似度矩阵和 DP 的规模。"""
+    n, m = len(segments), len(sentences)
+    if n <= max_segs or m == 0:
+        return [(segments, sentences)]
+    parts = (n + max_segs - 1) // max_segs
+    out = []
+    seg_start = sent_start = 0
+    for k in range(parts):
+        seg_end = n if k == parts - 1 else int(round(n * (k + 1) / parts))
+        sent_end = m if k == parts - 1 else int(round(m * (k + 1) / parts))
+        if seg_end > seg_start:
+            out.append((segments[seg_start:seg_end], sentences[sent_start:sent_end]))
+        seg_start, sent_start = seg_end, sent_end
+    return out
+
+
+def align_block(segments, sentences, ratio, cps, lead_in=4, lead_out=4, lead_sent=3,
+                sim_prefix=None, sim_weight=2.0, band=None):
     """单调对齐一段音频的所有 ASR 段与译文的句子。
 
     - 期望字数 = 0.7 × (源文字数 × ratio) + 0.3 × (时长 × cps)
@@ -530,6 +548,9 @@ def align_block(segments, sentences, ratio, cps, lead_in=4, lead_out=4, lead_sen
     - 允许开头 lead_in 段 / 结尾 lead_out 段不分配文本（片头广告、片尾），
       也允许跳过开头 lead_sent 句（插图说明等），代价很小但不为零 —— 这就是
       "不认关键词也能吸收片头" 的通用做法。
+    - sim_prefix 不为 None 时启用语义项：sim_prefix[i][j] 是前 i 段 × 前 j 句的
+      相似度前缀和，用它可以 O(1) 算出「第 i 段 + 第 pj..j 句」的块平均相似度。
+      语义项和长度项都归一化后再加权，避免量级互相吞掉。
     """
     n, m = len(segments), len(sentences)
     if m == 0:
@@ -550,6 +571,18 @@ def align_block(segments, sentences, ratio, cps, lead_in=4, lead_out=4, lead_sen
     dp = [[INF] * (m + 1) for _ in range(n + 1)]
     back = [[None] * (m + 1) for _ in range(n + 1)]
 
+    # 带宽限制：只在「期望累进句号 ±band」内搜索，长章也能跑；
+    # 注意这是**限制搜索范围**，不是把句子切块——真实句子始终可达
+    bounds = None
+    if band:
+        avg_len = max(1.0, cum[-1] / m)
+        acc = 0.0
+        bounds = []
+        for e in expects:
+            acc += e
+            center = acc / avg_len
+            bounds.append((max(0, int(center - band)), min(m, int(center + band) + 1)))
+
     # 开头：允许前 lead_in 段"免费"不取文本（片头广告 / 念书名 / 出版社）
     for i in range(0, min(lead_in, n) + 1):
         dp[i][0] = 0.0
@@ -557,21 +590,33 @@ def align_block(segments, sentences, ratio, cps, lead_in=4, lead_out=4, lead_sen
     for j in range(0, min(lead_sent, m) + 1):
         dp[0][j] = min(dp[0][j], 0.6 * j)
 
+    use_sim = sim_prefix is not None
     for i in range(1, n + 1):
         expect = expects[i - 1]
-        for j in range(0, m + 1):
+        prev_dp = dp[i - 1]
+        prev_sim = sim_prefix[i - 1] if use_sim else None
+        lo, hi = bounds[i - 1] if bounds else (0, m)
+        for j in range(lo, hi + 1):
             # 这一段的两种"不取文本"情形代价为 0：块首的片头、块尾的片尾
             skip_cost = 0.0 if (j == 0 and i <= lead_in) or (j == m and i > n - lead_out) else expect
-            best, bj = dp[i - 1][j] + skip_cost, j
+            best, bj = prev_dp[j] + skip_cost, j
             for take in range(1, 7):
                 pj = j - take
                 if pj < 0:
                     break
-                prev = dp[i - 1][pj]
+                prev = prev_dp[pj]
                 if prev == INF:
                     continue
                 got = cum[j] - cum[pj]
-                cost = prev + (got - expect) ** 2 / expect + 0.4 * take
+                if use_sim:
+                    # 长度项归一化成相对误差，和语义项同量级；
+                    # 非对称：一句字幕塞太多字会读不过来，超额分配的惩罚加倍
+                    over = 2.0 if got > expect else 1.0
+                    len_cost = over * ((got - expect) / expect) ** 2
+                    avg_sim = (prev_sim[j] - prev_sim[pj]) / take
+                    cost = prev + len_cost + 0.4 * take - sim_weight * avg_sim
+                else:
+                    cost = prev + (got - expect) ** 2 / expect + 0.4 * take
                 if cost < best:
                     best, bj = cost, pj
             dp[i][j] = best
@@ -669,6 +714,11 @@ def main(argv=None):
     ap.add_argument("--book", default=None, help="译文 epub（默认自动找）")
     ap.add_argument("--out", default=None, help="输出 srt（默认同名 .zh.srt）")
     ap.add_argument("--report", default=None, help="输出对齐明细")
+    try:
+        from embed_scorer import add_embed_arguments
+        add_embed_arguments(ap)
+    except ImportError:
+        pass
     args = ap.parse_args(argv)
 
     audio, srt_path, book_path, media_dir = find_inputs(args.target)
@@ -707,6 +757,21 @@ def main(argv=None):
 
     cues = []
     covered_sent = 0
+    scorer = None
+    sim_weight = float(getattr(args, "sim_weight", 0.75) or 0.0)
+    if getattr(args, "embed", None):
+        try:
+            from embed_scorer import EmbeddingScorer
+            scorer = EmbeddingScorer(
+                args.embed,
+                device=getattr(args, "device", None),
+                cache_dir=getattr(args, "embed_cache", None),
+            )
+            print(f"语义对齐: 已启用（{args.embed}，权重 {sim_weight}）")
+        except Exception as ex:              # 模型没装/没下载都退回纯长度
+            print(f"语义对齐: 启用失败，退回纯长度对齐（{ex}）")
+            scorer = None
+
     for i, c in pairs:
         a = anchors[i]
         block = [s for s in segs if a["start"] - 0.01 <= s["start"] < a["end"] + 0.01]
@@ -716,9 +781,31 @@ def main(argv=None):
         src_chars = sum(src_len(s["text"]) for s in block) or 1
         ratio = c["chars"] / src_chars
         cps = c["chars"] / max(1e-6, dur)
-        assigned = align_block(block, c["sentences"], ratio, cps)
+
+        sub_segs, sub_sents = block, c["sentences"]
+        sim_prefix = None
+        band = None
+        if scorer is not None:
+            try:
+                import numpy as np
+                sim = scorer.score([x["text"] for x in sub_segs], sub_sents)
+                # 原始余弦在不同句对之间基线差异很大（0.2~0.9 重叠），
+                # 先按行做 z-score：只保留"这一行里哪句最像"的相对信号
+                mu = sim.mean(axis=1, keepdims=True)
+                sd = sim.std(axis=1, keepdims=True) + 1e-6
+                sim = np.maximum((sim - mu) / sd, 0.0).astype(np.float32)
+                sim_prefix = np.concatenate(
+                    [np.zeros((sim.shape[0], 1), dtype=np.float32),
+                     np.cumsum(sim, axis=1, dtype=np.float32)], axis=1)
+                band = max(60, len(sub_sents) // 6)
+            except Exception as ex:
+                print(f"  语义打分失败，本次退回长度对齐（{ex}）")
+                sim_prefix = None
+
+        assigned = align_block(sub_segs, sub_sents, ratio, cps,
+                               sim_prefix=sim_prefix, sim_weight=sim_weight, band=band)
         covered_sent += sum(len(x) for x in assigned)
-        for seg, got in zip(block, assigned):
+        for seg, got in zip(sub_segs, assigned):
             text = "".join(got).strip()
             if not text:
                 continue
