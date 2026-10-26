@@ -18,6 +18,7 @@ import queue
 import re
 import sys
 import threading
+import time
 import traceback
 
 import tkinter as tk
@@ -240,7 +241,7 @@ class App(tk.Tk):
                         borderwidth=0, font=("Microsoft YaHei UI", 9))
         style.map("Treeview", background=[("selected", "#3A2A28")])
         style.configure("TProgressbar", background=COLOR_ACCENT, troughcolor=COLOR_PANEL,
-                        borderwidth=0)
+                        borderwidth=0, thickness=14)
         style.configure("TCheckbutton", background=COLOR_BG, foreground=COLOR_TEXT)
         style.map("TCheckbutton", background=[("active", COLOR_BG)])
 
@@ -302,9 +303,18 @@ class App(tk.Tk):
 
         bottom = ttk.Frame(self, padding=(16, 10, 16, 14))
         bottom.pack(fill="both")
-        self.progress = ttk.Progressbar(bottom, mode="determinate")
-        self.progress.pack(fill="x")
-        self.log_box = tk.Text(bottom, height=9, bg=COLOR_PANEL, fg=COLOR_TEXT,
+
+        prow = ttk.Frame(bottom)
+        prow.pack(fill="x")
+        self.progress = ttk.Progressbar(prow, mode="determinate", maximum=1000)
+        self.progress.pack(side="left", fill="x", expand=True)
+        self.pct = ttk.Label(prow, text="0%", width=6, anchor="e", style="Dim.TLabel")
+        self.pct.pack(side="left", padx=(10, 0))
+
+        self.activity = ttk.Label(bottom, text="就绪", style="Dim.TLabel")
+        self.activity.pack(fill="x", pady=(6, 6))
+
+        self.log_box = tk.Text(bottom, height=8, bg=COLOR_PANEL, fg=COLOR_TEXT,
                                insertbackground=COLOR_TEXT, relief="flat",
                                font=("Consolas", 9), padx=10, pady=8)
         self.log_box.pack(fill="both", expand=True, pady=(8, 0))
@@ -327,16 +337,24 @@ class App(tk.Tk):
                     self.log_box.insert("end", payload + "\n")
                     self.log_box.see("end")
                     self.log_box.configure(state="disabled")
+                elif kind == "sub":
+                    text, frac = payload
+                    self.activity.configure(text=text)
+                    if frac is not None:
+                        self._set_frac(frac)
                 elif kind == "progress":
                     done, total = payload
-                    self.progress["maximum"] = max(1, total)
-                    self.progress["value"] = done
+                    self.total_books = max(1, total)
+                    self.current_index = done
+                    self._set_frac(0.0)
                     self.status.configure(text=f"进行中 {done}/{total}")
                 elif kind == "state":
                     book, state = payload
                     self._mark(book, state)
                 elif kind == "done":
                     self.status.configure(text=payload)
+                    self.activity.configure(text=payload)
+                    self._set_frac(1.0)
                     self.btn_all.configure(state="normal")
                     self.btn_sel.configure(state="normal")
                     self.btn_stop.configure(state="disabled")
@@ -344,6 +362,17 @@ class App(tk.Tk):
             pass
         self.after(120, self._drain)
 
+    def _set_frac(self, sub: float) -> None:
+        """把「第几本 + 这本完成到几成」换算成总进度。"""
+        total = max(1, getattr(self, "total_books", 1))
+        done = getattr(self, "current_index", 0)
+        overall = (done + max(0.0, min(1.0, sub))) / total
+        self.progress["value"] = overall * 1000
+        self.pct.configure(text=f"{overall * 100:3.0f}%")
+
+    def _on_progress(self, text: str, frac) -> None:
+        """srt_align 里的进度回调（在工作线程里被调用）。"""
+        self.queue.put(("sub", (text, frac)))
     def browse(self):
         d = filedialog.askdirectory(title="选择有声书根目录")
         if d:
@@ -390,6 +419,10 @@ class App(tk.Tk):
             return
 
         self.stop_flag = False
+        self.total_books = max(1, len(targets))
+        self.current_index = 0
+        self._set_frac(0.0)
+        self.activity.configure(text="准备中…")
         self.btn_all.configure(state="disabled")
         self.btn_sel.configure(state="disabled")
         self.btn_stop.configure(state="normal")
@@ -402,15 +435,21 @@ class App(tk.Tk):
         def work():
             total = len(targets)
             done = 0
+            S.PROGRESS = self._on_progress
+            self.queue.put(("progress", (0, total)))
             for b in targets:
                 if self.stop_flag:
                     self.log("已停止")
                     break
                 self.log(f"=== {b['name']} ===")
+                self.activity.configure(text=f"{done + 1}/{total} {b['name'][:26]}")
+                started = time.time()
                 ok = run_one(b, model, self.overwrite.get(), self.log)
                 done += 1
+                self.log(f"  用时 {time.time() - started:.0f} 秒")
                 self.queue.put(("progress", (done, total)))
                 self.queue.put(("state", (b, "✓ 完成" if ok else "✗ 失败")))
+            S.PROGRESS = None
             self.queue.put(("done", f"完成 {done}/{total}"))
 
         self.worker = threading.Thread(target=work, daemon=True)

@@ -71,6 +71,21 @@ def has_kana(text: str) -> bool:
     return any("\u3040" <= ch <= "\u30ff" for ch in text)
 
 
+# ------------------------------------------------------------------ 进度回调
+
+# GUI 会把它设成自己的函数；命令行下保持 None，行为不变
+PROGRESS = None
+
+
+def report_progress(text: str, frac: float | None = None) -> None:
+    """向调用方汇报进度（text=当前在干什么，frac=0~1 或 None 表示不确定）。"""
+    if PROGRESS is None:
+        return
+    try:
+        PROGRESS(text, frac)
+    except Exception:
+        pass
+
 # ------------------------------------------------------------------ SRT
 
 SRT_TIME = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)")
@@ -750,6 +765,7 @@ def main(argv=None):
           f"{sum(c['chars'] for c in chapters)} 字")
     print(f"锚点    : {os.path.basename(audio) if audio else '(无音频)'}  共 {len(anchors)} 个")
     print(f"配对方式: {mode}，配上 {len(pairs)} / {len(anchors)}")
+    report_progress(f"配对完成：{len(pairs)} 章", 0.05)
     for i, c in pairs:
         a = anchors[i]
         print(f"  [{a['start']/60:7.1f}分 +{(a['end']-a['start'])/60:6.1f}] "
@@ -772,7 +788,8 @@ def main(argv=None):
             print(f"语义对齐: 启用失败，退回纯长度对齐（{ex}）")
             scorer = None
 
-    for i, c in pairs:
+    for pair_no, (i, c) in enumerate(pairs, 1):
+        report_progress(f"{pair_no}/{len(pairs)} {c['title'][:18]}", 0.05 + 0.9 * (pair_no - 1) / max(1, len(pairs)))
         a = anchors[i]
         block = [s for s in segs if a["start"] - 0.01 <= s["start"] < a["end"] + 0.01]
         if not block:
@@ -788,6 +805,7 @@ def main(argv=None):
         if scorer is not None:
             try:
                 import numpy as np
+                report_progress(f"{pair_no}/{len(pairs)} {c['title'][:18]} · 编码中", None)
                 sim = scorer.score([x["text"] for x in sub_segs], sub_sents)
                 # 原始余弦在不同句对之间基线差异很大（0.2~0.9 重叠），
                 # 先按行做 z-score：只保留"这一行里哪句最像"的相对信号
@@ -817,6 +835,8 @@ def main(argv=None):
     with open(out_path, "w", encoding="utf-8") as f:
         for n, c in enumerate(cues, 1):
             f.write(f"{n}\n{fmt_time(c['start'])} --> {fmt_time(c['end'])}\n{c['text']}\n\n")
+
+    report_progress("写入完成", 1.0)
 
     # ---- 体检 ----
     total_sent = sum(len(c["sentences"]) for _, c in pairs)
