@@ -56,18 +56,23 @@ hdc install -r entry\build\default\outputs\default\entry-default-signed.hap
 | 播放 / 暂停 / 拖动进度 / 快退快进（秒数可配 5–30s） | ✅ |
 | 音量 | ✅ |
 | 章节切换 | ✅ |
-| m4b 内嵌章节表（chpl）解析 + 跳章 | ✅ |
+| m4b 内嵌章节表（chpl）解析 + 跳章 | ✅ 实测 106 章 |
 | m4b 直接播放（`AVDataSrcDescriptor`，不需要改名或复制） | ✅ |
 | 阅读页逐句高亮、自动滚动、点击跳转 | ✅ |
-| 双语对照（主字幕 + 译文，可关） | ✅ |
-| 字号 / 字体 / 颜色 / 加粗 / 描边粗细 / 译文大小 | ✅ |
+| 双语对照（主字幕 + 译文，按开始时间最近匹配） | ✅ |
+| 字号 / 字体 / 颜色 / 字重 5 档 / 描边粗细 / 描边颜色 / 译文大小 | ✅ |
 | 内置思源宋体（Regular + Bold，约 47 MB） | ✅ |
-| 5 套配色主题 | ✅ |
+| 界面缩放 80%–140%（对应桌面版三处 zoom） | ✅ |
+| 5 套预设配色 | ✅ |
+| **自定义配色**：背景/主色/金色/文字/字幕色/描边色 6 个色位，H-S-L 滑杆任意调 | ✅ |
+| 自定义配色持久化 | ✅ |
 | 收藏 / 书名搜索 / 只看收藏 / 只看有字幕 | ✅ |
 | 进度记忆 / 启动恢复上次位置 / 播完自动下一章 | ✅ |
-| 书架卡片进度条 + 顶栏总体进度 | ✅ |
-| 系统播控（后台播放、锁屏与播控中心显示当前字幕） | ✅ |
-| 实况窗 / 灵动胶囊字幕（`LiveViewKit`） | ✅ 代码已接，本机 `isLiveViewEnabled` 返回 yes |
+| 书架卡片进度条 + 顶栏总体进度 + 继续收听卡片 | ✅ |
+| 系统播控（锁屏与播控中心显示当前字幕） | ✅ |
+| 通知栏常驻字幕（设置里开关，需通知权限） | ✅ |
+| 后台播放长时任务（`backgroundModes: audioPlayback`） | ✅ 随通知开关启用 |
+| 实况窗 / 灵动胶囊字幕（`LiveViewKit`） | ⚠️ 代码完成、参数校验通过；需华为侧开通实况窗权限（`1003500005`） |
 | 清除播放记录 / 恢复默认设置 | ✅ |
 | 播放倍速 | ⛔ 桌面版已移除，保持一致 |
 | 全局热键 | ⛔ 桌面专有 |
@@ -78,8 +83,9 @@ hdc install -r entry\build\default\outputs\default\entry-default-signed.hap
 | --- | --- |
 | 悬浮窗覆盖其他 App | ❌ `SYSTEM_FLOAT_WINDOW` 是系统权限，普通应用拿不到 |
 | 画中画显示文字 | ❌ PiP 只接受 `XComponent` 视频，没有文字模板 |
-| **实况窗 / 灵动胶囊** | ✅ 系统给第三方开的正规口子：状态栏胶囊 + 锁屏显示当前字幕 |
-| **AVSession 播控中心** | ✅ 锁屏/播控卡片显示"书名 + 当前这句字幕" |
+| **实况窗 / 灵动胶囊** | ⚠️ 代码已接；需在 AppGallery Connect 申请实况窗权限（本机返回 `1003500005 The right of liveView is not enabled`） |
+| **AVSession 播控中心** | ✅ 锁屏/播控卡片显示"书名 + 当前这句字幕"，无需审批 |
+| **通知栏常驻字幕** | ✅ 设置里打开开关即可（需要通知权限），下拉通知栏能看到当前这句 |
 
 ## 目录
 
@@ -107,6 +113,16 @@ entry/src/main/ets/
 4. `listFileSync` 不认 `file://docs/...` URI → 用 `fileUri.FileUri(uri).path` 转真实路径。
 5. `tabIndex`、`outlineColor` 等 ArkTS 内置属性名不能当成员名。
 6. ArkTS 禁用 `for..in`、`Function.apply`、无类型对象字面量。
+7. **Tabs 里所有横向 Slider 都拖不动** —— Tabs 默认用 Swiper 承载页面，左右滑动手势会抢走滑杆的拖动。
+   解法：`Tabs(...).scrollable(false)`，只保留点底部标签切页。
+8. `startBackgroundRunning` 报 `9800005 bgMode is invalid`：要在 **`module.json5` 的 abilities 里声明**
+   `"backgroundModes": ["audioPlayback"]`，并且用 `ContinuousTaskRequest` + `SUBMODE_NORMAL_NOTIFICATION`（2），
+   老的枚举/字符串重载在这台机器上都不被接受。
+9. 系统权限弹窗（`requestEnableNotification`）**不响应 `uinput` 注入**，卡住时只能真人点，
+   或用 `bm uninstall -n <bundle> -k`（保留数据）重装清掉。
+10. 实况窗 `startLiveView` 的必填项是逐个报出来的：`primary.clickAction`(WantAgent) →
+    `primary.layoutData`(ProgressLayout) → `layoutData.color` 必须 `#AARRGGBB` →
+    `layoutData.nodeIcons`(≤30KB，用 PixelMap) → `capsule.icon`。全部补齐后才会走到权限校验。
 
 ## 调试
 
