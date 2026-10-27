@@ -102,6 +102,8 @@ export class MediaSession {
     this.lastSubtitle = subtitle;
     this.lastUpdateMs = now;
 
+    const safeSubtitleLog = subtitle.length > 24 ? subtitle.substring(0, 24) : subtitle;
+
     try {
       const metadata: avSession.AVMetadata = {
         assetId: chapterTitle.length > 0 ? chapterTitle : bookTitle,
@@ -122,6 +124,9 @@ export class MediaSession {
         speed: 1.0
       };
       await session.setAVPlaybackState(state);
+      hilog.info(0x0000, MediaSession.TAG,
+        'avsession updated: title=%{public}s / subtitle=%{public}s / %{public}dms',
+        bookTitle, safeSubtitleLog, positionMs);
     } catch (error) {
       const err = error as BusinessError;
       hilog.warn(0x0000, MediaSession.TAG, 'avsession update failed: code=%{public}d', err.code);

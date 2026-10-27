@@ -1062,6 +1062,43 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .layoutWeight(1)
       } else {
+        // 继续收听（桌面版 ContinueCommand 的等价物）
+        if (this.selectedBook !== null && this.selectedChapter !== null) {
+          Row() {
+            if (this.coverFor(this.selectedBook.coverPath) !== undefined) {
+              Image(this.coverFor(this.selectedBook.coverPath))
+                .width(36)
+                .height(44)
+                .objectFit(ImageFit.Cover)
+                .borderRadius(4)
+            }
+
+            Column() {
+              Text('继续收听')
+                .fontSize(10)
+                .fontColor(this.theme.gold)
+              Text(this.selectedChapter.title)
+                .fontSize(12)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .fontColor(this.theme.textPrimary)
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            .margin({ left: 10 })
+
+            Text(Timecode.formatShort(this.loadPosition(this.selectedChapter)) + ' / ' +
+              Timecode.formatShort(this.loadDuration(this.selectedChapter)))
+              .fontSize(10)
+              .fontColor(this.theme.textSecondary)
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 4, bottom: 8 })
+          .onClick(() => {
+            this.currentTab = 1;
+          })
+        }
+
         // 搜索 + 只看收藏
         Row() {
           TextInput({ placeholder: '搜索书名…', text: this.searchText })
@@ -1528,7 +1565,7 @@ struct Index {
           .fontColor(this.theme.textPrimary)
           .onClick(() => this.rescanSandbox())
 
-        Text('提示：在文件管理器里选中书本文件，直接「分享」给 KATARU 也行。')
+        Text('选一次文件夹就会同步进 App，之后书架直接可用；源里新增/删除书后再点一次即可。')
           .fontSize(11)
           .fontColor(this.theme.textSecondary)
           .width('100%')
@@ -2219,14 +2256,26 @@ struct Index {
 
   // ==================== 逻辑：字幕 ====================
 
-  /** 找某条主字幕对应的译文（按时间区间重叠匹配） */
+  /**
+   * 找某条主字幕对应的译文。
+   *
+   * 不能用"时间区间重叠"：两份 SRT 的断句时间不完全一致，
+   * 重叠匹配会拿到上一句（实测 0:16「神原骏河」配到了 0:14 的「001」）。
+   * 改成按**开始时间最接近**匹配，超过 2.5 秒才认为没有对应译文。
+   */
   private secondaryTextAt(startMs: number): string {
+    let best = '';
+    let bestDistance = 2500;
+
     for (const line of this.secondaryLines) {
-      if (startMs >= line.startMs - 300 && startMs <= line.endMs + 300) {
-        return line.text;
+      const distance = Math.abs(line.startMs - startMs);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = line.text;
       }
     }
-    return '';
+
+    return best;
   }
 
   /**
