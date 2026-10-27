@@ -11,6 +11,7 @@ import { BookStore } from '../model/BookStore';
 import { MediaSession } from '../model/MediaSession';
 import { LiveSubtitle } from '../model/LiveSubtitle';
 import { THEME_PRESETS, ThemeColors, ThemePreset, ThemeStore } from '../model/Theme';
+import { AudioChapterMark, Mp4Chapters } from '../model/Mp4Chapters';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
 import { SubtitleSynchronizer } from '../model/SubtitleSynchronizer';
 import { Timecode } from '../model/Timecode';
@@ -82,6 +83,11 @@ struct Index {
   @State theme: ThemeColors = THEME_PRESETS[0].colors;
   @State searchText: string = '';
   @State showFavoritesOnly: boolean = false;
+  @State needsReauth: boolean = false;
+  @State syncing: boolean = false;
+  @State syncProgress: string = '';
+  @State embeddedChapters: AudioChapterMark[] = [];
+  @State embeddedIndex: number = -1;
   @State favorites: string[] = [];
 
   // ---------- 媒体库 ----------
@@ -128,21 +134,21 @@ struct Index {
     this.loadSettings();
     this.loadFavorites();
 
-    // 书库只认"用户选过的文件夹"，不再往沙箱复制。
-    // 授权会在重装 App 后失效，那时提示用户重新选一次。
-    const saved = this.loadSavedRoot();
-    if (saved.length > 0) {
-      this.libraryRoot = saved;
-      // 重新激活持久授权（不调用的话重启后权限会失效）
-      this.reactivate(saved);
-      this.refreshLibrary();
-    } else {
-      this.libraryRoot = '';
-      this.books = [];
-      this.covers = [];
-      this.statusText = '还没有选书库文件夹 —— 到设置页点「选择书库文件夹」，选到放书的那一层';
-      hilog.info(0x0000, Index.TAG, 'no library folder yet');
-    }
+    // 书库只认"用户选过的文件夹"。
+    // 正常重启不会丢授权；重装 App（我在开发时反复装）会被系统收回，
+    // 那时界面上给一个"一键重新授权"，不用重新翻目录。
+    this.restoreLibraryRoot().then((restored: boolean) => {
+      if (!restored) {
+        this.books = [];
+        this.covers = [];
+        this.needsReauth = this.libraryRoot.length > 0;
+        this.statusText = this.needsReauth
+          ? '书库文件夹授权失效了（重装 App 会这样）—— 点下面的按钮重新授权一次'
+          : '还没有选书库文件夹 —— 点下面的按钮选到放书的那一层';
+        hilog.info(0x0000, Index.TAG, 'library not restored, needsReauth=%{public}s',
+          this.needsReauth ? 'yes' : 'no');
+      }
+    });
 
     // 探测实况窗（灵动胶囊）能力：没审批通过会返回 false
     this.liveSubtitle.isEnabled().then((ok: boolean) => {
@@ -363,28 +369,71 @@ struct Index {
     this.isPlaying = false;
   }
 
-  /** 读上次选的书库文件夹；读不出来（授权失效）就返回空 */
-  private loadSavedRoot(): string {
+  /**
+   * 恢复上次的书库文件夹。
+   *
+   * 顺序很重要：**先重新激活授权，再尝试列目录**。
+   *  1) 系统可能只是没激活持久授权（重启后常见），激活了就能读；
+   *  2) 再退一步用存下来的真实路径试（有的情况 URI 死了路径还通）；
+   *  3) 都不行才判定为"授权丢了"，交给界面提示一键重新选择。
+   */
+  private async restoreLibraryRoot(): Promise<boolean> {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
-      const saved = store.getSync('library_uri', '') as string;
-      if (saved.length === 0) {
-        return '';
+      const savedUri = store.getSync('library_uri', '') as string;
+      const savedPath = store.getSync('library_path', '') as string;
+
+      if (savedUri.length === 0 && savedPath.length === 0) {
+        return false;
       }
 
-      // 存的是 URI，但列目录要用真实路径，所以这里也走一遍解析
-      const resolved = this.resolveReadableDir(saved);
-      if (resolved.length === 0) {
-        hilog.warn(0x0000, Index.TAG, 'saved root unusable (permission lost?): %{public}s', saved);
-        return '';
+      // ① 先激活授权（persistPermission 对已授权的 URI 是幂等的）
+      if (savedUri.length > 0) {
+        await this.reactivate(savedUri);
       }
 
-      hilog.info(0x0000, Index.TAG, 'saved root OK: %{public}s', resolved);
-      return resolved;
+      // ② 依次尝试：激活后的 URI → 存下来的真实路径
+      const candidates: string[] = [];
+      if (savedUri.length > 0) {
+        candidates.push(savedUri);
+      }
+      if (savedPath.length > 0) {
+        candidates.push(savedPath);
+      }
+
+      for (const candidate of candidates) {
+        const resolved = this.resolveReadableDir(candidate);
+        if (resolved.length > 0) {
+          this.libraryRoot = resolved;
+          store.putSync('library_path', resolved);
+          store.flush();
+          hilog.info(0x0000, Index.TAG, 'library restored: %{public}s', resolved);
+          this.refreshLibrary();
+          return true;
+        }
+      }
+
+      hilog.warn(0x0000, Index.TAG, 'library permission lost (uri=%{public}s path=%{public}s)',
+        savedUri, savedPath);
+      // 保留下次选择器的起始位置，重新授权时可以一步到位
+      this.libraryRoot = savedPath.length > 0 ? savedPath : savedUri;
+      return false;
     } catch (error) {
-      hilog.warn(0x0000, Index.TAG, 'load saved root failed: %{public}s', JSON.stringify(error));
-      return '';
+      hilog.warn(0x0000, Index.TAG, 'restore library failed: %{public}s', JSON.stringify(error));
+      return false;
+    }
+  }
+
+  /** 记住真实路径（授权失效时还能用它做起始位置） */
+  private saveRootPath(path: string): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync('library_path', path);
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'save root path failed: %{public}s', JSON.stringify(error));
     }
   }
 
@@ -402,6 +451,245 @@ struct Index {
     }
   }
 
+  /**
+   * 打开本地书库（App 私有目录）。
+   * 这里不需要任何权限，所以永远可用 —— 这是"重启不丢"的关键。
+   */
+  private openLocalLibrary(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const sandboxRoot = context.filesDir + '/books';
+
+    try {
+      fileIo.mkdirSync(sandboxRoot, true);
+    } catch (error) {
+      // 已存在
+    }
+
+    this.libraryRoot = sandboxRoot;
+    this.refreshLibrary();
+
+    if (this.books.length === 0) {
+      this.needsReauth = false;
+      this.statusText = '还没有书 —— 点下面的按钮选书库文件夹（选一次会自动同步到本地）';
+      hilog.info(0x0000, Index.TAG, 'local library empty');
+    } else {
+      hilog.info(0x0000, Index.TAG, 'local library: %{public}d book(s)', this.books.length);
+    }
+  }
+
+  // ==================== 书库同步（文件夹 → App 自己的目录） ====================
+
+  /**
+   * 把选中的书库文件夹同步进 App 私有目录。
+   *
+   * 为什么必须同步：鸿蒙手机上的文件夹授权是**临时**的（实测 persistPermission
+   * 返回 "URI forbid to be persisted!"，重启 App 就丢），所以直接按原路径读
+   * 每次启动都要重新授权。同步一份到 App 目录后：不需要任何权限、重启不丢、
+   * 重装 App 也不丢（除了卸载）。
+   *
+   * 同步规则：源目录里有什么就有什么 —— 新书复制进来，改过的（大小不同）覆盖，
+   * 源里删掉的书在本地也删掉，保证不会留"幽灵书"。
+   */
+  private async syncFromFolder(sourceRoot: string): Promise<void> {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const sandboxRoot = context.filesDir + '/books';
+
+    try {
+      fileIo.mkdirSync(sandboxRoot, true);
+    } catch (error) {
+      // 已存在
+    }
+
+    this.syncing = true;
+    this.syncProgress = '正在同步书库…';
+
+    try {
+      const sourceBooks = LibraryScanner.scan(sourceRoot);
+      hilog.info(0x0000, Index.TAG, 'sync: source has %{public}d book(s)', sourceBooks.length);
+
+      let copied = 0;
+      let skipped = 0;
+      const keepNames: string[] = [];
+
+      for (const book of sourceBooks) {
+        const bookName = book.title.replace(/[\/\\:*?"<>|]/g, '_');
+        keepNames.push(bookName);
+        const bookDir = `${sandboxRoot}/${bookName}`;
+
+        try {
+          fileIo.mkdirSync(bookDir, true);
+        } catch (error) {
+          // 已存在
+        }
+
+        // 章节音频 + 字幕
+        for (const chapter of book.chapters) {
+          this.syncProgress = '同步：' + book.title;
+
+          if (this.syncOneFile(chapter.audioPath, bookDir)) {
+            copied++;
+          } else {
+            skipped++;
+          }
+
+          if (chapter.subtitlePath.length > 0) {
+            if (this.syncOneFile(chapter.subtitlePath, bookDir)) {
+              copied++;
+            } else {
+              skipped++;
+            }
+          }
+
+          if (chapter.secondarySubtitlePath.length > 0) {
+            if (this.syncOneFile(chapter.secondarySubtitlePath, bookDir)) {
+              copied++;
+            } else {
+              skipped++;
+            }
+          }
+        }
+
+        // 封面
+        if (book.coverPath.length > 0) {
+          this.syncOneFile(book.coverPath, bookDir);
+        }
+      }
+
+      // 删掉源里已经不存在的书（移动/删除后不留残留）
+      let removed = 0;
+      try {
+        const existing = fileIo.listFileSync(sandboxRoot);
+        for (const name of existing) {
+          let isDir = false;
+          try {
+            isDir = fileIo.statSync(`${sandboxRoot}/${name}`).isDirectory();
+          } catch (error) {
+            isDir = false;
+          }
+          if (!isDir) {
+            continue;
+          }
+
+          let keep = false;
+          for (const nameToKeep of keepNames) {
+            if (nameToKeep === name) {
+              keep = true;
+              break;
+            }
+          }
+
+          if (!keep) {
+            fileIo.rmdirSync(`${sandboxRoot}/${name}`);
+            removed++;
+            hilog.info(0x0000, Index.TAG, 'sync: removed obsolete book %{public}s', name);
+          }
+        }
+      } catch (error) {
+        hilog.warn(0x0000, Index.TAG, 'sync cleanup failed: %{public}s', JSON.stringify(error));
+      }
+
+      hilog.info(0x0000, Index.TAG,
+        'sync done: copied=%{public}d skipped=%{public}d removed=%{public}d', copied, skipped, removed);
+
+      this.libraryRoot = sandboxRoot;
+      this.saveRootPath(sandboxRoot);
+      this.refreshLibrary();
+
+      if (this.books.length > 0) {
+        this.statusText = `已同步 ${this.books.length} 本书（本地）`;
+      } else {
+        this.statusText = '这个文件夹里没找到书（每本书一个子文件夹，里面放音频和字幕）';
+      }
+    } catch (error) {
+      this.statusText = '同步失败：' + JSON.stringify(error);
+      hilog.error(0x0000, Index.TAG, 'sync failed: %{public}s', JSON.stringify(error));
+    } finally {
+      this.syncing = false;
+      this.syncProgress = '';
+    }
+  }
+
+  /** 同步单个文件；返回是否真的复制了（false = 已是最新） */
+  private syncOneFile(sourcePath: string, targetDir: string): boolean {
+    let fileName = sourcePath.substring(sourcePath.lastIndexOf('/') + 1);
+    fileName = fileName.replace(/[\/\\:*?"<>|]/g, '_');
+
+    // AVPlayer 按扩展名认格式，.m4b 不认；同步时落成 .m4a（内容不变）
+    if (fileName.toLowerCase().endsWith('.m4b')) {
+      fileName = fileName.substring(0, fileName.length - 4) + '.m4a';
+    }
+
+    const target = `${targetDir}/${fileName}`;
+
+    try {
+      const sourceSize = fileIo.statSync(sourcePath).size;
+      if (sourceSize <= 0) {
+        return false;
+      }
+
+      if (fileIo.accessSync(target)) {
+        let existing = 0;
+        try {
+          existing = fileIo.statSync(target).size;
+        } catch (error) {
+          existing = -1;
+        }
+        if (existing === sourceSize) {
+          return false;
+        }
+        try {
+          fileIo.unlinkSync(target);
+        } catch (error) {
+          // 覆盖写
+        }
+      }
+
+      const written = this.copyFileChunked(sourcePath, target);
+      return written === sourceSize;
+    } catch (error) {
+      hilog.error(0x0000, Index.TAG, 'sync file failed: %{public}s %{public}s',
+        fileName, JSON.stringify(error));
+      return false;
+    }
+  }
+
+  /** 分块复制（不能用 fileIo.copyFile：实测会写出 0 字节空文件） */
+  private copyFileChunked(sourcePath: string, targetPath: string): number {
+    const chunk = 4 * 1024 * 1024;
+    const buffer = new ArrayBuffer(chunk);
+
+    const src = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
+    let total = 0;
+    let written = 0;
+
+    try {
+      total = fileIo.statSync(src.fd).size;
+      const dst = fileIo.openSync(targetPath,
+        fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+
+      try {
+        let readOffset = 0;
+        while (readOffset < total) {
+          const want = Math.min(chunk, total - readOffset);
+          const read = fileIo.readSync(src.fd, buffer, { offset: readOffset, length: want });
+          if (read <= 0) {
+            break;
+          }
+          const wrote = fileIo.writeSync(dst.fd, buffer, { offset: written, length: read });
+          written += wrote;
+          readOffset += read;
+        }
+      } finally {
+        fileIo.closeSync(dst);
+      }
+    } finally {
+      fileIo.closeSync(src);
+    }
+
+    hilog.info(0x0000, Index.TAG, 'copied %{public}d/%{public}d bytes -> %{public}s',
+      written, total, targetPath.substring(targetPath.lastIndexOf('/') + 1));
+    return written;
+  }
   /** 把路径解码成 PixelMap（Image 组件对沙箱外路径不认，必须先解码） */
   private async loadPixelMap(path: string): Promise<image.PixelMap | undefined> {
     let file: fileIo.File | null = null;
@@ -587,6 +875,14 @@ struct Index {
     try {
       const options = new picker.DocumentSelectOptions();
       options.maxSelectNumber = 1;
+      // 从上次的目录开始挑，省得每次翻（有些版本不接受，忽略即可）
+      if (this.libraryRoot.startsWith('file://')) {
+        try {
+          options.defaultFilePathUri = this.libraryRoot;
+        } catch (error) {
+          // 忽略
+        }
+      }
       // 官方文档：selectMode 的系统能力
       //   API 26.0.0+  → UserFileService（通用）
       //   API 11 ~ 24  → UserFileService.FolderSelection（仅 2-in-1）
@@ -630,23 +926,17 @@ struct Index {
         hilog.warn(0x0000, Index.TAG, 'persist permission failed: %{public}s', JSON.stringify(error));
       }
 
-      // 用真实路径当书库根：这样下面所有的 listFile / openSync / Image 都能直接用
-      this.libraryRoot = resolved;
+      // 记下源文件夹，然后立刻同步进 App 目录：
+      // 之后不需要任何授权、重启不丢（这是持久化的关键）
+      this.needsReauth = false;
       this.saveRoot(uri);
-      this.refreshLibrary();
-
-      if (this.books.length === 0) {
-        this.statusText = '这个文件夹里没找到书（每本书应该是一个子文件夹，里面放音频和字幕）';
-      } else {
-        this.statusText = '书库文件夹已设为：' + resolved;
-      }
+      this.saveRootPath(resolved);
+      await this.syncFromFolder(resolved);
     } catch (error) {
       const err = error as BusinessError;
       hilog.error(0x0000, Index.TAG, 'choose folder failed: code=%{public}d msg=%{public}s',
         err.code, err.message);
 
-      // 只有真的"能力不存在"才降级；用户取消不会走到这里
-      this.statusText = '选文件夹失败（' + err.message + '），已切换成多选文件';
       this.statusText = '选文件夹失败：' + err.message;
     }
   }
@@ -737,23 +1027,26 @@ struct Index {
     Column() {
       if (this.books.length === 0) {
         Column() {
-          Text(this.scanning ? '正在扫描…' : '书架是空的')
-            .fontSize(16)
+          Text(this.needsReauth ? '书库授权失效了' : '书架是空的')
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
             .fontColor(this.theme.textPrimary)
 
-          Text(`把「一本书一个文件夹」放进这个目录：\n${this.libraryRoot}`)
+          Text(this.needsReauth
+            ? `上次选的是：\n${this.libraryRoot}\n\n重装 App 会让系统收回文件夹授权，点下面按钮重新授权一次就好（书不会动）。`
+            : '把「一本书一个文件夹」放进手机里，然后点下面的按钮选那一层文件夹：\nDownload/KATARU/Book')
             .fontSize(12)
             .lineHeight(20)
             .textAlign(TextAlign.Center)
             .fontColor(this.theme.textSecondary)
             .margin({ top: 12, left: 24, right: 24 })
 
-
-          Text('一次多选这本的：音频 (.m4b/.mp3) + 字幕 (.srt) + 封面 (png)')
-            .fontSize(11)
-            .fontColor(this.theme.textSecondary)
-            .textAlign(TextAlign.Center)
-            .margin({ top: 10, left: 24, right: 24 })
+          Button(this.needsReauth ? '一键重新授权' : '选择书库文件夹')
+            .margin({ top: 18 })
+            .height(40)
+            .backgroundColor(this.theme.accent)
+            .fontColor('#FFFFFF')
+            .onClick(() => this.chooseLibraryFolder())
         }
         .width('100%')
         .justifyContent(FlexAlign.Center)
@@ -921,7 +1214,35 @@ struct Index {
           .padding({ left: 24, right: 24, top: 4 })
       }
 
-      // 章节切换（多章的书才显示）
+      // 内嵌章节（m4b 的 chpl）：单文件 12 小时也能跳章
+      if (this.embeddedChapters.length > 0) {
+        Scroll() {
+          Row() {
+            ForEach(this.embeddedChapters, (mark: AudioChapterMark, index: number) => {
+              Text(mark.title.length > 0 ? mark.title : Timecode.formatShort(mark.startMs))
+                .fontSize(12)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: 180 })
+                .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+                .margin({ right: 8 })
+                .borderRadius(14)
+                .backgroundColor(index === this.embeddedIndex
+                  ? this.theme.gold : this.theme.panelBackground)
+                .fontColor(index === this.embeddedIndex
+                  ? '#1A1718' : this.theme.textPrimary)
+                .onClick(() => this.seekTo(mark.startMs))
+            }, (mark: AudioChapterMark, index: number) => index + '-' + mark.startMs)
+          }
+          .padding({ left: 16, right: 16 })
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .width('100%')
+        .margin({ top: 8 })
+      }
+
+      // 章节切换（多文件的书才显示）
       if (this.selectedBook !== null && this.selectedBook.chapters.length > 1) {
         Scroll() {
           Row() {
@@ -1381,6 +1702,11 @@ struct Index {
       this.loadSecondarySubtitle(chapter.secondarySubtitlePath);
     }
 
+    // 读音频内部章节表（m4b 的 chpl）：一个 12 小时的单文件也能跳章
+    this.embeddedChapters = Mp4Chapters.read(chapter.audioPath);
+    this.embeddedIndex = -1;
+    hilog.info(0x0000, Index.TAG, 'embedded chapters: %{public}d', this.embeddedChapters.length);
+
     const resumeAt = this.loadProgress(chapter);
 
     try {
@@ -1814,6 +2140,26 @@ struct Index {
     }
     if (index > 0) {
       this.openChapter(book.chapters[index - 1]);
+    }
+  }
+
+  /** 按播放位置算当前在哪个内嵌章节 */
+  private updateEmbeddedIndex(): void {
+    if (this.embeddedChapters.length === 0) {
+      return;
+    }
+
+    let index = -1;
+    for (let i = 0; i < this.embeddedChapters.length; i++) {
+      if (this.positionMs >= this.embeddedChapters[i].startMs) {
+        index = i;
+      } else {
+        break;
+      }
+    }
+
+    if (index !== this.embeddedIndex) {
+      this.embeddedIndex = index;
     }
   }
 
