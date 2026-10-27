@@ -1065,9 +1065,31 @@ struct Index {
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .margin({ top: 6 })
 
-                Text(`${book.chapterCount} 章`)
-                  .fontSize(11)
-                  .fontColor(this.theme.textSecondary)
+                Row() {
+                  Text(book.chapterCount + ' 章')
+                    .fontSize(11)
+                    .fontColor(this.theme.textSecondary)
+                  Blank()
+                  Text(this.bookProgressText(book))
+                    .fontSize(11)
+                    .fontColor(this.theme.gold)
+                }
+                .width('100%')
+                .padding({ left: 2, right: 2 })
+
+                // 收听进度条（桌面版卡片上那条 3px 的）
+                if (this.bookProgress(book) > 0) {
+                  Progress({
+                    value: Math.round(this.bookProgress(book) * 100),
+                    total: 100,
+                    type: ProgressType.Linear
+                  })
+                    .width('100%')
+                    .height(3)
+                    .color(this.theme.gold)
+                    .backgroundColor(this.theme.borderSoft)
+                    .margin({ top: 4 })
+                }
               }
               .width('100%')
               .onClick(() => this.selectBook(book))
@@ -1760,6 +1782,7 @@ struct Index {
           this.durationMs = player.duration;
           hilog.info(0x0000, Index.TAG, 'prepared: duration=%{public}d resumeAt=%{public}d',
             this.durationMs, resumeAt);
+          this.saveDuration(chapter, this.durationMs);
           if (resumeAt > 0 && resumeAt < this.durationMs - 3000) {
             player.seek(resumeAt, media.SeekMode.SEEK_CLOSEST);
             this.positionMs = resumeAt;
@@ -1938,6 +1961,83 @@ struct Index {
       hilog.warn(0x0000, Index.TAG, 'load progress failed: %{public}s', JSON.stringify(error));
       return 0;
     }
+  }
+
+  /** 记住章节时长（用来算书架上的进度条） */
+  private saveDuration(chapter: Chapter, durationMs: number): void {
+    if (durationMs <= 0) {
+      return;
+    }
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync('dur_' + chapter.audioPath, durationMs);
+    } catch (error) {
+      // 忽略
+    }
+  }
+
+  private loadDuration(chapter: Chapter): number {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      return store.getSync('dur_' + chapter.audioPath, 0) as number;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  private loadPosition(chapter: Chapter): number {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      return store.getSync('pos_' + chapter.audioPath, 0) as number;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /** 一本书的收听进度 0..1（按有记录的章节累加） */
+  private bookProgress(book: Book): number {
+    let listened = 0;
+    let total = 0;
+    for (const chapter of book.chapters) {
+      const duration = this.loadDuration(chapter);
+      if (duration <= 0) {
+        continue;
+      }
+      total += duration;
+      listened += Math.min(this.loadPosition(chapter), duration);
+    }
+    if (total <= 0) {
+      return 0;
+    }
+    return listened / total;
+  }
+
+  private bookProgressText(book: Book): string {
+    const percent = this.bookProgress(book);
+    if (percent <= 0) {
+      return '';
+    }
+    return Math.round(percent * 100) + '%';
+  }
+
+  /** 全部书的总体进度 */
+  private overallProgress(): number {
+    if (this.books.length === 0) {
+      return 0;
+    }
+    let sum = 0;
+    let counted = 0;
+    for (const book of this.books) {
+      const percent = this.bookProgress(book);
+      if (percent > 0) {
+        sum += percent;
+        counted++;
+      }
+    }
+    return counted === 0 ? 0 : sum / counted;
   }
 
   /** 存当前位置；force=false 时最多 5 秒存一次，避免刷盘太频繁 */
