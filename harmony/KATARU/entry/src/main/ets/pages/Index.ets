@@ -137,21 +137,9 @@ struct Index {
     this.loadSettings();
     this.loadFavorites();
 
-    // 书库只认"用户选过的文件夹"。
-    // 正常重启不会丢授权；重装 App（我在开发时反复装）会被系统收回，
-    // 那时界面上给一个"一键重新授权"，不用重新翻目录。
-    this.restoreLibraryRoot().then((restored: boolean) => {
-      if (!restored) {
-        this.books = [];
-        this.covers = [];
-        this.needsReauth = this.libraryRoot.length > 0;
-        this.statusText = this.needsReauth
-          ? '书库文件夹授权失效了（重装 App 会这样）—— 点下面的按钮重新授权一次'
-          : '还没有选书库文件夹 —— 点下面的按钮选到放书的那一层';
-        hilog.info(0x0000, Index.TAG, 'library not restored, needsReauth=%{public}s',
-          this.needsReauth ? 'yes' : 'no');
-      }
-    });
+    // 打开本地书库（App 私有目录）：不依赖任何权限，重启/重装都不会丢。
+    // 「书库文件夹」只是同步源，书架空的时候选一次即可。
+    this.openLocalLibrary();
 
     // 探测实况窗（灵动胶囊）能力：没审批通过会返回 false
     this.liveSubtitle.isEnabled().then((ok: boolean) => {
@@ -378,61 +366,6 @@ struct Index {
     this.isPlaying = false;
   }
 
-  /**
-   * 恢复上次的书库文件夹。
-   *
-   * 顺序很重要：**先重新激活授权，再尝试列目录**。
-   *  1) 系统可能只是没激活持久授权（重启后常见），激活了就能读；
-   *  2) 再退一步用存下来的真实路径试（有的情况 URI 死了路径还通）；
-   *  3) 都不行才判定为"授权丢了"，交给界面提示一键重新选择。
-   */
-  private async restoreLibraryRoot(): Promise<boolean> {
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
-      const savedUri = store.getSync('library_uri', '') as string;
-      const savedPath = store.getSync('library_path', '') as string;
-
-      if (savedUri.length === 0 && savedPath.length === 0) {
-        return false;
-      }
-
-      // ① 先激活授权（persistPermission 对已授权的 URI 是幂等的）
-      if (savedUri.length > 0) {
-        await this.reactivate(savedUri);
-      }
-
-      // ② 依次尝试：激活后的 URI → 存下来的真实路径
-      const candidates: string[] = [];
-      if (savedUri.length > 0) {
-        candidates.push(savedUri);
-      }
-      if (savedPath.length > 0) {
-        candidates.push(savedPath);
-      }
-
-      for (const candidate of candidates) {
-        const resolved = this.resolveReadableDir(candidate);
-        if (resolved.length > 0) {
-          this.libraryRoot = resolved;
-          store.putSync('library_path', resolved);
-          store.flush();
-          hilog.info(0x0000, Index.TAG, 'library restored: %{public}s', resolved);
-          this.refreshLibrary();
-          return true;
-        }
-      }
-
-      hilog.warn(0x0000, Index.TAG, 'library permission lost (uri=%{public}s path=%{public}s)',
-        savedUri, savedPath);
-      // 保留下次选择器的起始位置，重新授权时可以一步到位
-      this.libraryRoot = savedPath.length > 0 ? savedPath : savedUri;
-      return false;
-    } catch (error) {
-      hilog.warn(0x0000, Index.TAG, 'restore library failed: %{public}s', JSON.stringify(error));
-      return false;
-    }
-  }
 
   /** 记住真实路径（授权失效时还能用它做起始位置） */
   private saveRootPath(path: string): void {
