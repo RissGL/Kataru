@@ -90,6 +90,7 @@ struct Index {
   @State embeddedIndex: number = -1;
   @State resumeLast: boolean = true;
   @State showOnlyWithSubtitle: boolean = false;
+  @State skipSeconds: number = 10;
   @State favorites: string[] = [];
 
   // ---------- 媒体库 ----------
@@ -173,6 +174,7 @@ struct Index {
       this.autoNext = store.getSync('autoNext', true) as boolean;
       this.volume = store.getSync('volume', 1) as number;
       this.resumeLast = store.getSync('resumeLast', true) as boolean;
+      this.skipSeconds = store.getSync('skipSeconds', 10) as number;
       this.showOnlyWithSubtitle = store.getSync('showOnlyWithSubtitle', false) as boolean;
       hilog.info(0x0000, Index.TAG, 'settings loaded: fontSize=%{public}d font=%{public}s',
         this.fontSize, this.fontFamilyValue);
@@ -193,6 +195,7 @@ struct Index {
       store.putSync('autoNext', this.autoNext);
       store.putSync('volume', this.volume);
       store.putSync('resumeLast', this.resumeLast);
+      store.putSync('skipSeconds', this.skipSeconds);
       store.putSync('showOnlyWithSubtitle', this.showOnlyWithSubtitle);
       store.flush();
     } catch (error) {
@@ -1338,12 +1341,12 @@ struct Index {
       .padding({ left: 20, right: 20 })
 
       Row() {
-        Button('−10s')
+        Button('−' + this.skipSeconds + 's')
           .fontSize(13)
           .height(40)
           .backgroundColor(this.theme.panelBackground)
           .fontColor(this.theme.textPrimary)
-          .onClick(() => this.skip(-10000))
+          .onClick(() => this.skip(-this.skipSeconds * 1000))
 
         Button(this.isPlaying ? '暂停' : '播放')
           .fontSize(15)
@@ -1355,12 +1358,12 @@ struct Index {
           .enabled(this.selectedChapter !== null)
           .onClick(() => this.togglePlay())
 
-        Button('+10s')
+        Button('+' + this.skipSeconds + 's')
           .fontSize(13)
           .height(40)
           .backgroundColor(this.theme.panelBackground)
           .fontColor(this.theme.textPrimary)
-          .onClick(() => this.skip(10000))
+          .onClick(() => this.skip(this.skipSeconds * 1000))
       }
       .margin({ top: 10, bottom: 18 })
     }
@@ -1634,6 +1637,30 @@ struct Index {
         .padding({ top: 4, bottom: 4 })
 
         Row() {
+          Text('快进/快退秒数')
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Row() {
+            ForEach([5, 10, 15, 30], (seconds: number) => {
+              Text(seconds + 's')
+                .fontSize(12)
+                .padding({ left: 9, right: 9, top: 5, bottom: 5 })
+                .margin({ left: 6 })
+                .borderRadius(12)
+                .backgroundColor(this.skipSeconds === seconds ? this.theme.accent : this.theme.panelBackground)
+                .fontColor(this.skipSeconds === seconds ? '#FFFFFF' : this.theme.textPrimary)
+                .onClick(() => {
+                  this.skipSeconds = seconds;
+                  this.saveSettings();
+                })
+            }, (seconds: number) => seconds.toString())
+          }
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Row() {
           Text('启动时回到上次收听的位置')
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
@@ -1679,6 +1706,24 @@ struct Index {
         .padding({ top: 4, bottom: 4 })
 
         Blank().height(10)
+
+        this.SectionTitle('数据')
+
+        Button('清除播放记录')
+          .width('100%')
+          .height(36)
+          .margin({ bottom: 6 })
+          .backgroundColor(this.theme.panelBackground)
+          .fontColor(this.theme.textPrimary)
+          .onClick(() => this.clearPlaybackData())
+
+        Button('恢复默认设置')
+          .width('100%')
+          .height(36)
+          .margin({ bottom: 6 })
+          .backgroundColor(this.theme.panelBackground)
+          .fontColor(this.theme.textPrimary)
+          .onClick(() => this.resetSettings())
 
         this.SectionTitle('状态')
         Text(this.statusText)
@@ -2146,6 +2191,51 @@ struct Index {
       this.saveProgress(false);
       this.syncMediaSession(false);
     }, 100);
+  }
+
+  // ==================== 数据管理 ====================
+
+  /** 清除所有播放位置记录 */
+  private clearPlaybackData(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      // ArkTS 不支持 for..in，用 Object.keys 取 key 数组
+      const allValues: Object = store.getAllSync();
+      const keys: string[] = Object.keys(allValues);
+      let cleared = 0;
+      for (const key of keys) {
+        if (key.startsWith('pos_')) {
+          store.deleteSync(key);
+          cleared++;
+        }
+      }
+      store.putSync('last_audio', '');
+      store.flush();
+      this.positionMs = 0;
+      this.statusText = '已清除 ' + cleared + ' 条播放记录';
+      hilog.info(0x0000, Index.TAG, 'cleared %{public}d progress entries', cleared);
+    } catch (error) {
+      this.statusText = '清除失败：' + JSON.stringify(error);
+    }
+  }
+
+  /** 恢复默认设置 */
+  private resetSettings(): void {
+    this.fontSize = 26;
+    this.fontFamilyValue = 'HarmonyOS Sans SC';
+    this.subtitleColor = '#FFFFFF';
+    this.subtitleBold = false;
+    this.showSecondary = true;
+    this.autoNext = true;
+    this.resumeLast = true;
+    this.showOnlyWithSubtitle = false;
+    this.volume = 1;
+    this.skipSeconds = 10;
+    this.themeIndex = 0;
+    this.theme = THEME_PRESETS[0].colors;
+    this.saveSettings();
+    this.statusText = '已恢复默认设置';
   }
 
   // ==================== 系统播控（后台播放 / 锁屏字幕） ====================
