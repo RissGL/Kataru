@@ -178,6 +178,8 @@ struct Index {
   @State subtitleWeight: number = 400;
   /** 通知栏/锁屏显示字幕（需要通知权限，默认关） */
   @State showNotification: boolean = false;
+  /** 界面缩放 0.8–1.4（对应桌面版三处 zoom） */
+  @State uiScale: number = 1;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -348,6 +350,7 @@ struct Index {
       this.subtitleBold = store.getSync('subtitleBold', false) as boolean;
       this.subtitleWeight = store.getSync('subtitleWeight', 400) as number;
       this.showNotification = store.getSync('showNotification', false) as boolean;
+      this.uiScale = store.getSync('uiScale', 1) as number;
       this.showSecondary = store.getSync('showSecondary', true) as boolean;
       this.autoNext = store.getSync('autoNext', true) as boolean;
       this.volume = store.getSync('volume', 1) as number;
@@ -374,6 +377,7 @@ struct Index {
       store.putSync('subtitleBold', this.subtitleBold);
       store.putSync('subtitleWeight', this.subtitleWeight);
       store.putSync('showNotification', this.showNotification);
+      store.putSync('uiScale', this.uiScale);
       store.putSync('showSecondary', this.showSecondary);
       store.putSync('autoNext', this.autoNext);
       store.putSync('volume', this.volume);
@@ -1410,7 +1414,7 @@ struct Index {
     Column() {
       if (this.selectedBook !== null && this.coverFor(this.selectedBook.coverPath) !== undefined) {
         Image(this.coverFor(this.selectedBook.coverPath))
-          .width(150)
+          .width(150 * this.uiScale)
           .aspectRatio(0.83)
           .objectFit(ImageFit.Cover)
           .borderRadius(8)
@@ -1419,7 +1423,7 @@ struct Index {
         Column() {
           Text('📖').fontSize(36)
         }
-        .width(150)
+        .width(150 * this.uiScale)
         .aspectRatio(0.83)
         .justifyContent(FlexAlign.Center)
         .backgroundColor(this.theme.panelBackground)
@@ -1675,8 +1679,8 @@ struct Index {
 
                 Column() {
                   Text(line.text)
-                    .fontSize(16)
-                    .lineHeight(24)
+                    .fontSize(16 * this.uiScale)
+                    .lineHeight(24 * this.uiScale)
                     .width('100%')
                     .fontColor(index === this.currentIndex ? this.theme.textPrimary : this.theme.textSecondary)
                     .fontWeight(index === this.currentIndex ? FontWeight.Medium : FontWeight.Normal)
@@ -1684,8 +1688,8 @@ struct Index {
                   // 双语：这一条对应的译文
                   if (this.showSecondary && this.secondaryLines.length > 0) {
                     Text(this.secondaryTextAt(line.startMs))
-                      .fontSize(13)
-                      .lineHeight(19)
+                      .fontSize(13 * this.uiScale)
+                      .lineHeight(19 * this.uiScale)
                       .width('100%')
                       .fontColor(this.theme.textSecondary)
                       .margin({ top: 2 })
