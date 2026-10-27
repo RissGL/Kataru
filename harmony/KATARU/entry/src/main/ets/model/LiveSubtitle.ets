@@ -1,4 +1,7 @@
 import { liveViewManager } from '@kit.LiveViewKit';
+import { common, wantAgent, Want } from '@kit.AbilityKit';
+import type { WantAgent } from '@ohos.wantAgent';
+import { image } from '@kit.ImageKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
@@ -22,6 +25,47 @@ export class LiveSubtitle {
   private started: boolean = false;
   private sequence: number = 0;
   private lastText: string = '';
+  /** 点击胶囊时回到 App 的 WantAgent（实况窗必填） */
+  private clickAction: WantAgent | null = null;
+  /** 实况窗图标（rawfile 解码成 PixelMap，系统要求 < 30KB） */
+  private iconPixel: image.PixelMap | null = null;
+
+  /** 把 rawfile 里的 live_icon.png 解码成 PixelMap（实况窗 icon/nodeIcons 都用它） */
+  async setupIcon(context: common.UIAbilityContext): Promise<void> {
+    try {
+      const buffer = await context.resourceManager.getRawFileContent('live_icon.png');
+      const source = image.createImageSource(buffer.buffer as ArrayBuffer);
+      this.iconPixel = await source.createPixelMap();
+      await source.release();
+      hilog.info(0x0000, LiveSubtitle.TAG, 'liveView icon ready');
+    } catch (error) {
+      hilog.warn(0x0000, LiveSubtitle.TAG, 'setupIcon failed: %{public}s', JSON.stringify(error));
+      this.iconPixel = null;
+    }
+  }
+
+  /**
+   * 准备"点击胶囊回到 App"的 WantAgent。
+   * 实况窗的 primary.clickAction 是必填项，缺了会报 401 Parameter error。
+   */
+  async setupClickAction(context: common.UIAbilityContext): Promise<void> {
+    try {
+      const wants: Want[] = [{
+        bundleName: context.abilityInfo.bundleName,
+        abilityName: context.abilityInfo.name,
+      }];
+      const info: wantAgent.WantAgentInfo = {
+        wants: wants,
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+      };
+      this.clickAction = await wantAgent.getWantAgent(info);
+      hilog.info(0x0000, LiveSubtitle.TAG, 'liveView clickAction ready');
+    } catch (error) {
+      hilog.warn(0x0000, LiveSubtitle.TAG, 'setupClickAction failed: %{public}s', JSON.stringify(error));
+    }
+  }
 
   /** 查询是否具备实况窗能力（需要华为侧审批通过） */
   async isEnabled(): Promise<boolean> {
@@ -122,14 +166,28 @@ export class LiveSubtitle {
     const capsule: liveViewManager.TextCapsule = {
       type: liveViewManager.CapsuleType.CAPSULE_TYPE_TEXT,
       status: 1,
+      icon: this.iconPixel !== null ? this.iconPixel : 'live_icon.png',
+      backgroundColor: '#FF121011',
+      isContentDisplayed: true,
       title: safeSubtitle,
       content: safeTitle
     };
 
+    // PROGRESS 场景必须有 layoutData，否则系统报 401
+    // 用默认文字模板：只要标题 + 当前这句字幕，不需要进度节点图标
+    const layout: liveViewManager.ProgressLayout = {
+      layoutType: liveViewManager.LayoutType.LAYOUT_TYPE_DEFAULT,
+      progress: 0
+    };
+
     const primary: liveViewManager.PrimaryData = {
       title: safeTitle,
-      content: content
+      content: content,
+      layoutData: layout
     };
+    if (this.clickAction !== null) {
+      primary.clickAction = this.clickAction;
+    }
 
     const data: liveViewManager.LiveViewData = {
       primary: primary,

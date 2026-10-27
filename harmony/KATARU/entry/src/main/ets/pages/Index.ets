@@ -146,8 +146,13 @@ struct Index {
     // 「书库文件夹」只是同步源，书架空的时候选一次即可。
     this.openLocalLibrary();
 
-    // 探测实况窗（灵动胶囊）能力：没审批通过会返回 false
-    this.liveSubtitle.isEnabled().then((ok: boolean) => {
+    // 实况窗：先准备 clickAction（liveView 必填），再探测能力
+    const uiContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.liveSubtitle.setupIcon(uiContext).then(() => {
+      return this.liveSubtitle.setupClickAction(uiContext);
+    }).then(() => {
+      return this.liveSubtitle.isEnabled();
+    }).then((ok: boolean) => {
       this.liveViewAvailable = ok;
     });
   }
@@ -1772,6 +1777,19 @@ struct Index {
           .onClick(() => this.resetSettings())
 
         this.SectionTitle('状态')
+
+        Row() {
+          Text('实况窗（灵动胶囊）')
+            .fontSize(12)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Text(this.liveViewAvailable ? '可用' : '未开通（需在华为后台申请实况窗权限）')
+            .fontSize(11)
+            .fontColor(this.liveViewAvailable ? this.theme.gold : this.theme.textSecondary)
+        }
+        .width('100%')
+        .padding({ top: 2, bottom: 6 })
+
         Text(this.statusText)
           .fontSize(11)
           .fontColor(this.theme.textSecondary)
@@ -1867,6 +1885,12 @@ struct Index {
           // 接上系统播控：后台继续播放 + 锁屏/播控中心显示当前这句字幕
           this.startMediaSession();
           this.saveLastPlayed(chapter);
+
+          // 实况窗/灵动胶囊：在其他应用之上显示当前字幕
+          const liveBook = this.selectedBook;
+          if (liveBook !== null) {
+            this.liveSubtitle.start(liveBook.title, chapter.title, this.currentText);
+          }
         } else if (state === 'playing') {
           this.isPlaying = true;
           this.startTicker();
@@ -2300,6 +2324,8 @@ struct Index {
     const index = this.synchronizer.currentIndex;
     if (this.currentIndex !== index) {
       this.currentIndex = index;
+      hilog.info(0x0000, Index.TAG, 'line -> %{public}d @ %{public}dms: %{public}s',
+        index, this.positionMs, text.length > 40 ? text.substring(0, 40) : text);
       if (index >= 0) {
         this.readingScroller.scrollToIndex(index, true, ScrollAlign.CENTER);
       }
@@ -2323,7 +2349,18 @@ struct Index {
       this.applyCurrentLine();
       this.saveProgress(false);
       this.syncMediaSession(false);
+      this.syncLiveSubtitle();
     }, 100);
+  }
+
+  /** 字幕变了就更新实况窗胶囊（全在别的 App 上也能看到这句） */
+  private syncLiveSubtitle(): void {
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (book === null || chapter === null) {
+      return;
+    }
+    this.liveSubtitle.update(book.title, chapter.title, this.currentText);
   }
 
   // ==================== 封面 ====================
