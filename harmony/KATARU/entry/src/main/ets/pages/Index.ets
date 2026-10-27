@@ -76,6 +76,8 @@ struct Index {
   private readingScroller: Scroller = new Scroller();
   private lastProgressSaveMs: number = 0;
   private currentAudioFile: fileIo.File | null = null;
+  private subtitleCachePath: string = '';
+  private subtitleCacheLines: SubtitleLine[] = [];
   private mediaSession: MediaSession = new MediaSession();
   private liveSubtitle: LiveSubtitle = new LiveSubtitle();
   @State liveViewAvailable: boolean = false;
@@ -1178,7 +1180,7 @@ struct Index {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-      Text(this.selectedChapter === null ? '选一本书开始' : this.selectedChapter.title)
+      Text(this.selectedChapter === null ? '选一本书开始' : this.currentChapterProgressText())
         .fontSize(12)
         .fontColor(this.theme.textSecondary)
         .margin({ top: 4 })
@@ -2175,12 +2177,21 @@ struct Index {
 
   private loadSubtitle(path: string): void {
     try {
-      const parseStart = Date.now();
-      const content = this.readTextByUri(path);
-      const warnings: string[] = [];
-      const lines = SrtParser.parse(content, warnings);
-      hilog.info(0x0000, Index.TAG, 'subtitle parse: %{public}d chars -> %{public}d lines in %{public}d ms',
-        content.length, lines.length, Date.now() - parseStart);
+      // 同一个字幕文件来回切章时不用重复解析（1 MB 的日文字幕有上万条）
+      let lines: SubtitleLine[] = [];
+      if (path === this.subtitleCachePath && this.subtitleCacheLines.length > 0) {
+        lines = this.subtitleCacheLines;
+        hilog.info(0x0000, Index.TAG, 'subtitle cache hit: %{public}d lines', lines.length);
+      } else {
+        const parseStart = Date.now();
+        const content = this.readTextByUri(path);
+        const warnings: string[] = [];
+        lines = SrtParser.parse(content, warnings);
+        this.subtitleCachePath = path;
+        this.subtitleCacheLines = lines;
+        hilog.info(0x0000, Index.TAG, 'subtitle parse: %{public}d chars -> %{public}d lines in %{public}d ms',
+          content.length, lines.length, Date.now() - parseStart);
+      }
 
       this.synchronizer.load(lines);
       this.lines = lines;
@@ -2459,6 +2470,28 @@ struct Index {
     if (index > 0) {
       this.openChapter(book.chapters[index - 1]);
     }
+  }
+
+  /** 播放页的"第 N/M 章 · xx%" */
+  private currentChapterProgressText(): string {
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (chapter === null) {
+      return '';
+    }
+
+    let text = chapter.title;
+    if (book !== null && book.chapters.length > 1) {
+      const index = this.chapterIndexOf(chapter);
+      if (index >= 0) {
+        text = '第 ' + (index + 1) + '/' + book.chapters.length + ' 章 · ' + chapter.title;
+      }
+    }
+
+    if (this.durationMs > 0) {
+      text += '  ·  ' + Math.round(this.positionMs / this.durationMs * 100) + '%';
+    }
+    return text;
   }
 
   /** 按播放位置算当前在哪个内嵌章节 */
