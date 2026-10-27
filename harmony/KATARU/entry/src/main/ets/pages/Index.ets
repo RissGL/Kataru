@@ -1184,6 +1184,28 @@ struct Index {
         .margin({ top: 8 })
       }
 
+      if (this.selectedBook !== null) {
+        Row() {
+          Text('换封面')
+            .fontSize(11)
+            .fontColor(this.theme.textSecondary)
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .backgroundColor(this.theme.panelBackground)
+            .borderRadius(12)
+            .onClick(() => this.chooseCoverImage())
+
+          Text('恢复自动封面')
+            .fontSize(11)
+            .fontColor(this.theme.textSecondary)
+            .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+            .margin({ left: 8 })
+            .backgroundColor(this.theme.panelBackground)
+            .borderRadius(12)
+            .onClick(() => this.clearCoverImage())
+        }
+        .margin({ top: 6 })
+      }
+
       Text(this.selectedBook === null ? '未选择书' : this.selectedBook.title)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
@@ -2191,6 +2213,77 @@ struct Index {
       this.saveProgress(false);
       this.syncMediaSession(false);
     }, 100);
+  }
+
+  // ==================== 封面 ====================
+
+  /** 换封面：选一张图，存成书本目录下的 cover.png */
+  private async chooseCoverImage(): Promise<void> {
+    const book = this.selectedBook;
+    if (book === null) {
+      return;
+    }
+
+    try {
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      options.fileSuffixFilters = ['图片|.png,.jpg,.jpeg,.webp'];
+
+      const pickerInstance = new picker.DocumentViewPicker(this.getUIContext().getHostContext() as common.UIAbilityContext);
+      const uris: string[] = await pickerInstance.select(options);
+      if (uris === null || uris.length === 0) {
+        return;
+      }
+
+      const ext = BookStore.extFromUri(uris[0]);
+      const targetName = ext.length > 0 ? ('cover' + ext) : 'cover.png';
+      const target = `${book.folderPath}/${targetName}`;
+
+      const written = this.copyFileChunked(uris[0], target);
+      hilog.info(0x0000, Index.TAG, 'cover replaced: %{public}s (%{public}d bytes)', target, written);
+
+      // 顺带删除旧格式的 cover，避免两套并存
+      for (const other of ['cover.png', 'cover.jpg', 'cover.jpeg', 'cover.webp']) {
+        const path = `${book.folderPath}/${other}`;
+        if (path !== target && fileIo.accessSync(path)) {
+          try {
+            fileIo.unlinkSync(path);
+          } catch (error) {
+            // 忽略
+          }
+        }
+      }
+
+      this.refreshLibrary();
+      this.statusText = '封面已更新';
+    } catch (error) {
+      this.statusText = '换封面失败：' + JSON.stringify(error);
+      hilog.error(0x0000, Index.TAG, 'choose cover failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  /** 恢复自动封面：删掉自定义 cover，回到同名图/第一张图 */
+  private clearCoverImage(): void {
+    const book = this.selectedBook;
+    if (book === null) {
+      return;
+    }
+
+    let removed = 0;
+    for (const name of ['cover.png', 'cover.jpg', 'cover.jpeg', 'cover.webp']) {
+      const path = `${book.folderPath}/${name}`;
+      try {
+        if (fileIo.accessSync(path)) {
+          fileIo.unlinkSync(path);
+          removed++;
+        }
+      } catch (error) {
+        // 忽略
+      }
+    }
+
+    this.refreshLibrary();
+    this.statusText = removed > 0 ? '已恢复自动封面' : '没有自定义封面';
   }
 
   // ==================== 数据管理 ====================

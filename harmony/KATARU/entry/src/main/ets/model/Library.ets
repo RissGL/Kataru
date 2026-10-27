@@ -210,7 +210,19 @@ export class LibraryScanner {
 
   /** 找封面 */
   private static findCover(folderPath: string, files: string[]): string {
-    // ① 和文件夹同名 / 和音频同名的图片（这部手机里的书就是这么放的）
+    // ① 标准封面名优先（cover.png 是"换封面"功能写进来的，用户选择优先）
+    for (const name of LibraryScanner.COVER_NAMES) {
+      for (const ext of LibraryScanner.COVER_EXT) {
+        const candidate = name + ext;
+        for (const file of files) {
+          if (file.toLowerCase() === candidate) {
+            return `${folderPath}/${file}`;
+          }
+        }
+      }
+    }
+
+    // ② 和文件夹同名 / 和音频同名的图片
     const folderName = folderPath.substring(folderPath.lastIndexOf('/') + 1);
     for (const file of files) {
       const lower = file.toLowerCase();
@@ -223,18 +235,6 @@ export class LibraryScanner {
             folderName.toLowerCase().startsWith(stem.toLowerCase()) ||
             stem.toLowerCase().startsWith(folderName.toLowerCase())) {
           return `${folderPath}/${file}`;
-        }
-      }
-    }
-
-    // ② 标准封面名
-    for (const name of LibraryScanner.COVER_NAMES) {
-      for (const ext of LibraryScanner.COVER_EXT) {
-        const candidate = name + ext;
-        for (const file of files) {
-          if (file.toLowerCase() === candidate) {
-            return `${folderPath}/${file}`;
-          }
         }
       }
     }
