@@ -10,6 +10,7 @@ import { Book, Chapter, LibraryScanner } from '../model/Library';
 import { BookStore } from '../model/BookStore';
 import { MediaSession } from '../model/MediaSession';
 import { LiveSubtitle } from '../model/LiveSubtitle';
+import { THEME_PRESETS, ThemeColors, ThemePreset, ThemeStore } from '../model/Theme';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
 import { SubtitleSynchronizer } from '../model/SubtitleSynchronizer';
 import { Timecode } from '../model/Timecode';
@@ -77,6 +78,11 @@ struct Index {
   private mediaSession: MediaSession = new MediaSession();
   private liveSubtitle: LiveSubtitle = new LiveSubtitle();
   @State liveViewAvailable: boolean = false;
+  @State themeIndex: number = 0;
+  @State theme: ThemeColors = THEME_PRESETS[0].colors;
+  @State searchText: string = '';
+  @State showFavoritesOnly: boolean = false;
+  @State favorites: string[] = [];
 
   // ---------- 媒体库 ----------
   @State books: Book[] = [];
@@ -120,6 +126,7 @@ struct Index {
   aboutToAppear(): void {
     this.registerBundledFonts();
     this.loadSettings();
+    this.loadFavorites();
 
     // 书库只认"用户选过的文件夹"，不再往沙箱复制。
     // 授权会在重装 App 后失效，那时提示用户重新选一次。
@@ -232,6 +239,98 @@ struct Index {
       books.length, this.libraryRoot);
   }
 
+  // ==================== 收藏 / 搜索 ====================
+
+  private favoriteKey(book: Book): string {
+    return book.folderPath.length > 0 ? book.folderPath : book.title;
+  }
+
+  private isFavorite(book: Book): boolean {
+    const key = this.favoriteKey(book);
+    for (const item of this.favorites) {
+      if (item === key) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private toggleFavorite(book: Book): void {
+    const key = this.favoriteKey(book);
+    const rest: string[] = [];
+    let removed = false;
+    for (const item of this.favorites) {
+      if (item === key) {
+        removed = true;
+      } else {
+        rest.push(item);
+      }
+    }
+
+    if (!removed) {
+      rest.push(key);
+    }
+
+    this.favorites = rest;
+    this.saveFavorites();
+    hilog.info(0x0000, Index.TAG, 'favorite toggled: %{public}s -> %{public}s',
+      key, removed ? 'off' : 'on');
+  }
+
+  private saveFavorites(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync('favorites', JSON.stringify(this.favorites));
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'save favorites failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  private loadFavorites(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      const raw = store.getSync('favorites', '[]') as string;
+      const parsed = JSON.parse(raw) as string[];
+      if (parsed !== null && parsed !== undefined) {
+        this.favorites = parsed;
+      }
+    } catch (error) {
+      this.favorites = [];
+    }
+  }
+
+  /** 搜索 + 收藏过滤后的书（收藏的排前面） */
+  private filteredBooks(): Book[] {
+    const keyword = this.searchText.trim().toLowerCase();
+    const favorite: Book[] = [];
+    const normal: Book[] = [];
+
+    for (const book of this.books) {
+      if (this.showFavoritesOnly && !this.isFavorite(book)) {
+        continue;
+      }
+      if (keyword.length > 0 && book.title.toLowerCase().indexOf(keyword) < 0) {
+        continue;
+      }
+      if (this.isFavorite(book)) {
+        favorite.push(book);
+      } else {
+        normal.push(book);
+      }
+    }
+
+    const result: Book[] = [];
+    for (const book of favorite) {
+      result.push(book);
+    }
+    for (const book of normal) {
+      result.push(book);
+    }
+    return result;
+  }
   /** 书/章被移动或删除后，清掉已经失效的选中状态，避免点到不存在的文件 */
   private pruneSelection(): void {
     const book = this.selectedBook;
@@ -572,7 +671,7 @@ struct Index {
         Text('KATARU')
           .fontSize(19)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(this.theme.textPrimary)
 
         Blank()
 
@@ -582,7 +681,7 @@ struct Index {
         if (this.currentTab === 2 && this.lines.length > 0) {
           Text(`${this.currentIndex + 1} / ${this.lines.length}`)
             .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme.textSecondary)
             .margin({ left: 8 })
         }
       }
@@ -619,7 +718,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(this.theme.pageBackground)
   }
 
   @Builder
@@ -627,7 +726,7 @@ struct Index {
     Text(label)
       .fontSize(13)
       .fontWeight(this.currentTab === index ? FontWeight.Medium : FontWeight.Normal)
-      .fontColor(this.currentTab === index ? $r('app.color.gold') : $r('app.color.text_secondary'))
+      .fontColor(this.currentTab === index ? this.theme.gold : this.theme.textSecondary)
       .textAlign(TextAlign.Center)
       .width('100%')
   }
@@ -640,19 +739,19 @@ struct Index {
         Column() {
           Text(this.scanning ? '正在扫描…' : '书架是空的')
             .fontSize(16)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.theme.textPrimary)
 
           Text(`把「一本书一个文件夹」放进这个目录：\n${this.libraryRoot}`)
             .fontSize(12)
             .lineHeight(20)
             .textAlign(TextAlign.Center)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme.textSecondary)
             .margin({ top: 12, left: 24, right: 24 })
 
 
           Text('一次多选这本的：音频 (.m4b/.mp3) + 字幕 (.srt) + 封面 (png)')
             .fontSize(11)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme.textSecondary)
             .textAlign(TextAlign.Center)
             .margin({ top: 10, left: 24, right: 24 })
         }
@@ -660,11 +759,38 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .layoutWeight(1)
       } else {
+        // 搜索 + 只看收藏
+        Row() {
+          TextInput({ placeholder: '搜索书名…', text: this.searchText })
+            .layoutWeight(1)
+            .height(34)
+            .fontSize(13)
+            .placeholderColor(this.theme.textSecondary)
+            .fontColor(this.theme.textPrimary)
+            .backgroundColor(this.theme.panelBackground)
+            .borderRadius(17)
+            .onChange((value: string) => {
+              this.searchText = value;
+            })
+
+          Text(this.showFavoritesOnly ? '★' : '☆')
+            .fontSize(20)
+            .width(44)
+            .height(34)
+            .textAlign(TextAlign.Center)
+            .fontColor(this.showFavoritesOnly ? this.theme.gold : this.theme.textSecondary)
+            .onClick(() => {
+              this.showFavoritesOnly = !this.showFavoritesOnly;
+            })
+        }
+        .width('100%')
+        .padding({ left: 16, right: 16, bottom: 8 })
+
         Grid() {
-          ForEach(this.books, (book: Book) => {
+          ForEach(this.filteredBooks(), (book: Book) => {
             GridItem() {
               Column() {
-                Stack() {
+                Stack({ alignContent: Alignment.TopStart }) {
                   if (this.coverFor(book.coverPath) !== undefined) {
                     Image(this.coverFor(book.coverPath))
                       .width('100%')
@@ -677,28 +803,35 @@ struct Index {
                         .fontSize(30)
                       Text(book.title.substring(0, 2))
                         .fontSize(20)
-                        .fontColor($r('app.color.text_secondary'))
+                        .fontColor(this.theme.textSecondary)
                         .margin({ top: 6 })
                     }
                     .width('100%')
                     .aspectRatio(0.83)
                     .justifyContent(FlexAlign.Center)
-                    .backgroundColor($r('app.color.panel_background'))
+                    .backgroundColor(this.theme.panelBackground)
                     .borderRadius(6)
                   }
+
+                  // 收藏星标（桌面版有收藏功能）
+                  Text(this.isFavorite(book) ? '★' : '☆')
+                    .fontSize(18)
+                    .fontColor(this.isFavorite(book) ? this.theme.gold : '#CCFFFFFF')
+                    .padding(6)
+                    .onClick(() => this.toggleFavorite(book))
                 }
                 .width('100%')
 
                 Text(book.title)
                   .fontSize(13)
-                  .fontColor($r('app.color.text_primary'))
+                  .fontColor(this.theme.textPrimary)
                   .maxLines(1)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .margin({ top: 6 })
 
                 Text(`${book.chapterCount} 章`)
                   .fontSize(11)
-                  .fontColor($r('app.color.text_secondary'))
+                  .fontColor(this.theme.textSecondary)
               }
               .width('100%')
               .onClick(() => this.selectBook(book))
@@ -715,7 +848,7 @@ struct Index {
 
       Text(this.statusText)
         .fontSize(11)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(this.theme.textSecondary)
         .width('100%')
         .padding({ left: 16, right: 16, bottom: 8 })
         .maxLines(2)
@@ -743,7 +876,7 @@ struct Index {
         .width(150)
         .aspectRatio(0.83)
         .justifyContent(FlexAlign.Center)
-        .backgroundColor($r('app.color.panel_background'))
+        .backgroundColor(this.theme.panelBackground)
         .borderRadius(8)
         .margin({ top: 8 })
       }
@@ -751,14 +884,14 @@ struct Index {
       Text(this.selectedBook === null ? '未选择书' : this.selectedBook.title)
         .fontSize(16)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(this.theme.textPrimary)
         .margin({ top: 10 })
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(this.selectedChapter === null ? '选一本书开始' : this.selectedChapter.title)
         .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(this.theme.textSecondary)
         .margin({ top: 4 })
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -768,7 +901,7 @@ struct Index {
         .fontSize(this.fontSize)
         .lineHeight(this.fontSize * 1.5)
         .textAlign(TextAlign.Center)
-        .fontColor(this.currentText.length > 0 ? this.subtitleColor : $r('app.color.text_secondary'))
+        .fontColor(this.currentText.length > 0 ? this.subtitleColor : this.theme.textSecondary)
         .maxLines(4)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
@@ -781,7 +914,7 @@ struct Index {
           .fontSize(this.fontSize * 0.68)
           .lineHeight(this.fontSize * 1.05)
           .textAlign(TextAlign.Center)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme.textSecondary)
           .maxLines(3)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -803,10 +936,10 @@ struct Index {
                 .borderRadius(14)
                 .backgroundColor(this.selectedChapter !== null &&
                   this.selectedChapter.audioPath === chapter.audioPath
-                  ? $r('app.color.accent') : $r('app.color.panel_background'))
+                  ? this.theme.accent : this.theme.panelBackground)
                 .fontColor(this.selectedChapter !== null &&
                   this.selectedChapter.audioPath === chapter.audioPath
-                  ? Color.White : $r('app.color.text_primary'))
+                  ? Color.White : this.theme.textPrimary)
                 .onClick(() => this.openChapter(chapter))
             }, (chapter: Chapter) => chapter.audioPath)
           }
@@ -824,12 +957,12 @@ struct Index {
       Row() {
         Text('🔈')
           .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme.textSecondary)
 
         Slider({ value: this.volume * 100, min: 0, max: 100, step: 1 })
           .layoutWeight(1)
           .margin({ left: 8, right: 8 })
-          .selectedColor($r('app.color.gold'))
+          .selectedColor(this.theme.gold)
           .onChange((value: number) => {
             this.volume = value / 100;
             this.saveSettings();
@@ -842,7 +975,7 @@ struct Index {
           .fontSize(11)
           .width(38)
           .textAlign(TextAlign.End)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme.textSecondary)
       }
       .width('100%')
       .padding({ left: 20, right: 20 })
@@ -851,7 +984,7 @@ struct Index {
       Row() {
         Text(Timecode.formatShort(this.positionMs))
           .fontSize(11)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme.textSecondary)
 
         Slider({
           value: this.positionMs,
@@ -862,7 +995,7 @@ struct Index {
         })
           .layoutWeight(1)
           .margin({ left: 8, right: 8 })
-          .selectedColor($r('app.color.accent'))
+          .selectedColor(this.theme.accent)
           .onChange((value: number, mode: SliderChangeMode) => {
             if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
               this.seekTo(value);
@@ -871,7 +1004,7 @@ struct Index {
 
         Text(Timecode.formatShort(this.durationMs))
           .fontSize(11)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme.textSecondary)
       }
       .width('100%')
       .padding({ left: 20, right: 20 })
@@ -880,8 +1013,8 @@ struct Index {
         Button('−10s')
           .fontSize(13)
           .height(40)
-          .backgroundColor($r('app.color.panel_background'))
-          .fontColor($r('app.color.text_primary'))
+          .backgroundColor(this.theme.panelBackground)
+          .fontColor(this.theme.textPrimary)
           .onClick(() => this.skip(-10000))
 
         Button(this.isPlaying ? '暂停' : '播放')
@@ -889,7 +1022,7 @@ struct Index {
           .height(40)
           .width(104)
           .margin({ left: 14, right: 14 })
-          .backgroundColor($r('app.color.accent'))
+          .backgroundColor(this.theme.accent)
           .fontColor(Color.White)
           .enabled(this.selectedChapter !== null)
           .onClick(() => this.togglePlay())
@@ -897,8 +1030,8 @@ struct Index {
         Button('+10s')
           .fontSize(13)
           .height(40)
-          .backgroundColor($r('app.color.panel_background'))
-          .fontColor($r('app.color.text_primary'))
+          .backgroundColor(this.theme.panelBackground)
+          .fontColor(this.theme.textPrimary)
           .onClick(() => this.skip(10000))
       }
       .margin({ top: 10, bottom: 18 })
@@ -915,11 +1048,11 @@ struct Index {
         Column() {
           Text(this.selectedBook === null ? '先到书库选一本书' : '这一章没有配到字幕')
             .fontSize(15)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.theme.textPrimary)
 
           Text('字幕要和音频放同一个目录、文件名相同（01.mp3 配 01.srt）')
             .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme.textSecondary)
             .textAlign(TextAlign.Center)
             .margin({ top: 10, left: 28, right: 28 })
         }
@@ -934,14 +1067,14 @@ struct Index {
                 Text(line.timeText())
                   .fontSize(11)
                   .width(50)
-                  .fontColor($r('app.color.text_secondary'))
+                  .fontColor(this.theme.textSecondary)
 
                 Column() {
                   Text(line.text)
                     .fontSize(16)
                     .lineHeight(24)
                     .width('100%')
-                    .fontColor(index === this.currentIndex ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+                    .fontColor(index === this.currentIndex ? this.theme.textPrimary : this.theme.textSecondary)
                     .fontWeight(index === this.currentIndex ? FontWeight.Medium : FontWeight.Normal)
 
                   // 双语：这一条对应的译文
@@ -950,7 +1083,7 @@ struct Index {
                       .fontSize(13)
                       .lineHeight(19)
                       .width('100%')
-                      .fontColor($r('app.color.text_secondary'))
+                      .fontColor(this.theme.textSecondary)
                       .margin({ top: 2 })
                   }
                 }
@@ -986,11 +1119,11 @@ struct Index {
         Row() {
           Text('书本存放位置')
             .fontSize(13)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.theme.textPrimary)
           Blank()
           Text('App 内部目录（导入的书）')
             .fontSize(11)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme.textSecondary)
             .maxLines(1)
         }
         .width('100%')
@@ -1000,7 +1133,7 @@ struct Index {
           .width('100%')
           .height(40)
           .margin({ top: 8, bottom: 6 })
-          .backgroundColor($r('app.color.accent'))
+          .backgroundColor(this.theme.accent)
           .fontColor(Color.White)
           .onClick(() => this.chooseLibraryFolder())
 
@@ -1009,15 +1142,64 @@ struct Index {
           .width('100%')
           .height(36)
           .margin({ top: 0, bottom: 6 })
-          .backgroundColor($r('app.color.panel_background'))
-          .fontColor($r('app.color.text_primary'))
+          .backgroundColor(this.theme.panelBackground)
+          .fontColor(this.theme.textPrimary)
           .onClick(() => this.rescanSandbox())
 
         Text('提示：在文件管理器里选中书本文件，直接「分享」给 KATARU 也行。')
           .fontSize(11)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme.textSecondary)
           .width('100%')
           .margin({ bottom: 6 })
+        Blank().height(10)
+
+        this.SectionTitle('配色')
+
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(THEME_PRESETS, (preset: ThemePreset, index: number) => {
+            Row() {
+              Row()
+                .width(12)
+                .height(22)
+                .borderRadius(3)
+                .backgroundColor(preset.colors.accent)
+                .margin({ right: 4 })
+              Row()
+                .width(12)
+                .height(22)
+                .borderRadius(3)
+                .backgroundColor(preset.colors.gold)
+                .margin({ right: 4 })
+              Row()
+                .width(12)
+                .height(22)
+                .borderRadius(3)
+                .backgroundColor(preset.colors.pageBackground)
+                .border({ width: 1, color: preset.colors.borderSoft })
+
+              Text(preset.name)
+                .fontSize(12)
+                .fontColor(this.theme.textPrimary)
+                .margin({ left: 6 })
+            }
+            .padding({ left: 8, right: 10, top: 6, bottom: 6 })
+            .margin({ right: 8, bottom: 8 })
+            .borderRadius(8)
+            .backgroundColor(preset.colors.panelBackground)
+            .border({
+              width: this.themeIndex === index ? 2 : 1,
+              color: this.themeIndex === index ? preset.colors.gold : this.theme.borderSoft
+            })
+            .onClick(() => {
+              this.themeIndex = index;
+              this.theme = THEME_PRESETS[index].colors;
+              const context0 = this.getUIContext().getHostContext() as common.UIAbilityContext;
+              ThemeStore.save(context0, index);
+            })
+          }, (preset: ThemePreset) => preset.name)
+        }
+        .width('100%')
+
         Blank().height(10)
 
         this.SectionTitle('字幕外观')
@@ -1025,10 +1207,10 @@ struct Index {
         Row() {
           Text('字号')
             .fontSize(13)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.theme.textPrimary)
           Text(`${Math.round(this.fontSize)}`)
             .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme.textSecondary)
             .layoutWeight(1)
             .textAlign(TextAlign.End)
         }
@@ -1037,7 +1219,7 @@ struct Index {
 
         Slider({ value: this.fontSize, min: 14, max: 48, step: 1 })
           .width('100%')
-          .selectedColor($r('app.color.accent'))
+          .selectedColor(this.theme.accent)
           .onChange((value: number) => {
             this.fontSize = value;
             this.saveSettings();
@@ -1045,7 +1227,7 @@ struct Index {
 
         Text('字体')
           .fontSize(13)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(this.theme.textPrimary)
           .margin({ top: 10, bottom: 6 })
 
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -1054,8 +1236,8 @@ struct Index {
               .fontSize(12)
               .height(32)
               .margin({ right: 8, bottom: 8 })
-              .backgroundColor(this.fontFamilyValue === choice.value ? $r('app.color.accent') : $r('app.color.panel_background'))
-              .fontColor(this.fontFamilyValue === choice.value ? Color.White : $r('app.color.text_primary'))
+              .backgroundColor(this.fontFamilyValue === choice.value ? this.theme.accent : this.theme.panelBackground)
+              .fontColor(this.fontFamilyValue === choice.value ? Color.White : this.theme.textPrimary)
               .onClick(() => {
                 this.fontFamilyValue = choice.value;
                 this.saveSettings();
@@ -1067,7 +1249,7 @@ struct Index {
         // 字幕颜色（对应桌面版的配色/字幕颜色设置）
         Text('颜色')
           .fontSize(13)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(this.theme.textPrimary)
           .margin({ top: 6, bottom: 6 })
 
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -1080,7 +1262,7 @@ struct Index {
               .backgroundColor(item.value)
               .border({
                 width: this.subtitleColor === item.value ? 3 : 1,
-                color: this.subtitleColor === item.value ? $r('app.color.gold') : $r('app.color.border_soft')
+                color: this.subtitleColor === item.value ? this.theme.gold : this.theme.borderSoft
               })
               .onClick(() => {
                 this.subtitleColor = item.value;
@@ -1093,10 +1275,10 @@ struct Index {
         Row() {
           Text('加粗字幕')
             .fontSize(13)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.theme.textPrimary)
           Blank()
           Toggle({ type: ToggleType.Switch, isOn: this.subtitleBold })
-            .selectedColor($r('app.color.accent'))
+            .selectedColor(this.theme.accent)
             .onChange((isOn: boolean) => {
               this.subtitleBold = isOn;
               this.saveSettings();
@@ -1111,10 +1293,10 @@ struct Index {
         Row() {
           Text('双语对照')
             .fontSize(13)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.theme.textPrimary)
           Blank()
           Toggle({ type: ToggleType.Switch, isOn: this.showSecondary })
-            .selectedColor($r('app.color.accent'))
+            .selectedColor(this.theme.accent)
             .onChange((isOn: boolean) => {
               this.showSecondary = isOn;
               this.saveSettings();
@@ -1126,10 +1308,10 @@ struct Index {
         Row() {
           Text('播完自动下一章')
             .fontSize(13)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.theme.textPrimary)
           Blank()
           Toggle({ type: ToggleType.Switch, isOn: this.autoNext })
-            .selectedColor($r('app.color.accent'))
+            .selectedColor(this.theme.accent)
             .onChange((isOn: boolean) => {
               this.autoNext = isOn;
               this.saveSettings();
@@ -1143,7 +1325,7 @@ struct Index {
         this.SectionTitle('状态')
         Text(this.statusText)
           .fontSize(11)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme.textSecondary)
           .width('100%')
           .lineHeight(18)
       }
@@ -1160,7 +1342,7 @@ struct Index {
   SectionTitle(text: string) {
     Text(text)
       .fontSize(12)
-      .fontColor($r('app.color.gold'))
+      .fontColor(this.theme.gold)
       .margin({ top: 10, bottom: 4 })
   }
 
