@@ -480,14 +480,14 @@ struct Index {
         for (const chapter of book.chapters) {
           this.syncProgress = '同步：' + book.title;
 
-          if (this.syncOneFile(chapter.audioPath, bookDir)) {
+          if (await this.syncOneFile(chapter.audioPath, bookDir)) {
             copied++;
           } else {
             skipped++;
           }
 
           if (chapter.subtitlePath.length > 0) {
-            if (this.syncOneFile(chapter.subtitlePath, bookDir)) {
+            if (await this.syncOneFile(chapter.subtitlePath, bookDir)) {
               copied++;
             } else {
               skipped++;
@@ -495,7 +495,7 @@ struct Index {
           }
 
           if (chapter.secondarySubtitlePath.length > 0) {
-            if (this.syncOneFile(chapter.secondarySubtitlePath, bookDir)) {
+            if (await this.syncOneFile(chapter.secondarySubtitlePath, bookDir)) {
               copied++;
             } else {
               skipped++;
@@ -505,7 +505,7 @@ struct Index {
 
         // 封面
         if (book.coverPath.length > 0) {
-          this.syncOneFile(book.coverPath, bookDir);
+          await this.syncOneFile(book.coverPath, bookDir);
         }
       }
 
@@ -564,7 +564,7 @@ struct Index {
   }
 
   /** 同步单个文件；返回是否真的复制了（false = 已是最新） */
-  private syncOneFile(sourcePath: string, targetDir: string): boolean {
+  private async syncOneFile(sourcePath: string, targetDir: string): Promise<boolean> {
     let fileName = sourcePath.substring(sourcePath.lastIndexOf('/') + 1);
     fileName = fileName.replace(/[\/\\:*?"<>|]/g, '_');
 
@@ -598,7 +598,7 @@ struct Index {
         }
       }
 
-      const written = this.copyFileChunked(sourcePath, target);
+      const written = await this.copyFileChunked(sourcePath, target);
       return written === sourceSize;
     } catch (error) {
       hilog.error(0x0000, Index.TAG, 'sync file failed: %{public}s %{public}s',
@@ -607,8 +607,17 @@ struct Index {
     }
   }
 
+  /** 让出一次事件循环，保证同步大文件时界面不卡 */
+  private yieldToUi(): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(() => {
+        resolve();
+      }, 0);
+    });
+  }
+
   /** 分块复制（不能用 fileIo.copyFile：实测会写出 0 字节空文件） */
-  private copyFileChunked(sourcePath: string, targetPath: string): number {
+  private async copyFileChunked(sourcePath: string, targetPath: string): Promise<number> {
     const chunk = 4 * 1024 * 1024;
     const buffer = new ArrayBuffer(chunk);
 
@@ -623,6 +632,7 @@ struct Index {
 
       try {
         let readOffset = 0;
+        let sinceYield = 0;
         while (readOffset < total) {
           const want = Math.min(chunk, total - readOffset);
           const read = fileIo.readSync(src.fd, buffer, { offset: readOffset, length: want });
@@ -632,6 +642,13 @@ struct Index {
           const wrote = fileIo.writeSync(dst.fd, buffer, { offset: written, length: read });
           written += wrote;
           readOffset += read;
+
+          // 每 32 MB 让出一次，避免 700 MB 的音频把界面卡住
+          sinceYield += read;
+          if (sinceYield >= 32 * 1024 * 1024) {
+            sinceYield = 0;
+            await this.yieldToUi();
+          }
         }
       } finally {
         fileIo.closeSync(dst);
@@ -2299,7 +2316,7 @@ struct Index {
       const targetName = ext.length > 0 ? ('cover' + ext) : 'cover.png';
       const target = `${book.folderPath}/${targetName}`;
 
-      const written = this.copyFileChunked(uris[0], target);
+      const written = await this.copyFileChunked(uris[0], target);
       hilog.info(0x0000, Index.TAG, 'cover replaced: %{public}s (%{public}d bytes)', target, written);
 
       // 顺带删除旧格式的 cover，避免两套并存
