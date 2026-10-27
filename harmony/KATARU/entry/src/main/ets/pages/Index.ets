@@ -91,6 +91,9 @@ struct Index {
   @State resumeLast: boolean = true;
   @State showOnlyWithSubtitle: boolean = false;
   @State skipSeconds: number = 10;
+  @State subtitleOutlineWidth: number = 2;
+  @State subtitleOutlineColor: string = '#000000';
+  @State secondaryScale: number = 0.68;
   @State favorites: string[] = [];
 
   // ---------- 媒体库 ----------
@@ -163,6 +166,9 @@ struct Index {
       this.volume = store.getSync('volume', 1) as number;
       this.resumeLast = store.getSync('resumeLast', true) as boolean;
       this.skipSeconds = store.getSync('skipSeconds', 10) as number;
+      this.subtitleOutlineWidth = store.getSync('subtitleOutlineWidth', 2) as number;
+      this.subtitleOutlineColor = store.getSync('subtitleOutlineColor', '#000000') as string;
+      this.secondaryScale = store.getSync('secondaryScale', 0.68) as number;
       this.showOnlyWithSubtitle = store.getSync('showOnlyWithSubtitle', false) as boolean;
       hilog.info(0x0000, Index.TAG, 'settings loaded: fontSize=%{public}d font=%{public}s',
         this.fontSize, this.fontFamilyValue);
@@ -184,6 +190,9 @@ struct Index {
       store.putSync('volume', this.volume);
       store.putSync('resumeLast', this.resumeLast);
       store.putSync('skipSeconds', this.skipSeconds);
+      store.putSync('subtitleOutlineWidth', this.subtitleOutlineWidth);
+      store.putSync('subtitleOutlineColor', this.subtitleOutlineColor);
+      store.putSync('secondaryScale', this.secondaryScale);
       store.putSync('showOnlyWithSubtitle', this.showOnlyWithSubtitle);
       store.flush();
     } catch (error) {
@@ -1177,11 +1186,18 @@ struct Index {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(this.currentText.length > 0 ? this.currentText : '（这里显示当前这句）')
-        .fontFamily(this.fontFamilyValue)
+        .fontFamily(this.subtitleFamily())
         .fontSize(this.fontSize)
         .lineHeight(this.fontSize * 1.5)
         .textAlign(TextAlign.Center)
         .fontColor(this.currentText.length > 0 ? this.subtitleColor : this.theme.textSecondary)
+        // 描边：ArkUI 没有文字描边，用同色的零偏移阴影模拟（对应桌面版的 OutlineThickness）
+        .textShadow({
+          radius: this.subtitleOutlineWidth,
+          color: this.subtitleOutlineColor,
+          offsetX: 0,
+          offsetY: 0
+        })
         .maxLines(4)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
@@ -1191,7 +1207,7 @@ struct Index {
       if (this.showSecondary && this.secondaryText.length > 0) {
         Text(this.secondaryText)
           .fontFamily(this.fontFamilyValue)
-          .fontSize(this.fontSize * 0.68)
+          .fontSize(this.fontSize * this.secondaryScale)
           .lineHeight(this.fontSize * 1.05)
           .textAlign(TextAlign.Center)
           .fontColor(this.theme.textSecondary)
