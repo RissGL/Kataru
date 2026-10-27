@@ -73,12 +73,38 @@ export class LibraryScanner {
 
   /**
    * 扫描根目录。
-   * @param rootPath 例如 /storage/Users/currentUser/Download/KATARU Book
+   *
+   * 两种情况都支持：
+   *  - 根目录下面有若干子文件夹，每个是一本书（常规用法）
+   *  - **根目录本身就是一本书的文件夹**（用户直接选到书那一层）
    */
   static scan(rootPath: string): Book[] {
-    const books = LibraryScanner.scanLevel(rootPath, 0);
+    const books: Book[] = [];
+
+    // 根目录自己直接含音频 → 它就是一本书
+    const selfBook = LibraryScanner.scanBook(rootPath, LibraryScanner.baseName(rootPath));
+    if (selfBook.chapters.length > 0) {
+      books.push(selfBook);
+      return books;
+    }
+
+    const nested = LibraryScanner.scanLevel(rootPath, 0);
+    for (const book of nested) {
+      books.push(book);
+    }
     books.sort((a: Book, b: Book): number => a.title.localeCompare(b.title));
     return books;
+  }
+
+  /** 取路径最后一段作为书名 */
+  private static baseName(path: string): string {
+    let trimmed = path;
+    while (trimmed.length > 1 && trimmed.endsWith('/')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1);
+    }
+    const slash = trimmed.lastIndexOf('/');
+    const name = slash >= 0 ? trimmed.substring(slash + 1) : trimmed;
+    return name.length > 0 ? name : 'book';
   }
 
   /**
