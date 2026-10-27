@@ -4,3 +4,9 @@ harmony/*.jpeg
 harmony/k*-small.png
 harmony/screen*.png
 harmony/k*.jpeg
+# 调试截图（不进仓库）
+/*.png
+/*.jpeg
+/*.jpg
+/k*-small.png
+/screen*.png
