@@ -88,6 +88,8 @@ struct Index {
   @State syncProgress: string = '';
   @State embeddedChapters: AudioChapterMark[] = [];
   @State embeddedIndex: number = -1;
+  @State resumeLast: boolean = true;
+  @State showOnlyWithSubtitle: boolean = false;
   @State favorites: string[] = [];
 
   // ---------- 媒体库 ----------
@@ -170,6 +172,8 @@ struct Index {
       this.showSecondary = store.getSync('showSecondary', true) as boolean;
       this.autoNext = store.getSync('autoNext', true) as boolean;
       this.volume = store.getSync('volume', 1) as number;
+      this.resumeLast = store.getSync('resumeLast', true) as boolean;
+      this.showOnlyWithSubtitle = store.getSync('showOnlyWithSubtitle', false) as boolean;
       hilog.info(0x0000, Index.TAG, 'settings loaded: fontSize=%{public}d font=%{public}s',
         this.fontSize, this.fontFamilyValue);
     } catch (error) {
@@ -188,6 +192,8 @@ struct Index {
       store.putSync('showSecondary', this.showSecondary);
       store.putSync('autoNext', this.autoNext);
       store.putSync('volume', this.volume);
+      store.putSync('resumeLast', this.resumeLast);
+      store.putSync('showOnlyWithSubtitle', this.showOnlyWithSubtitle);
       store.flush();
     } catch (error) {
       hilog.warn(0x0000, Index.TAG, 'save settings failed: %{public}s', JSON.stringify(error));
@@ -474,6 +480,7 @@ struct Index {
       hilog.info(0x0000, Index.TAG, 'local library empty');
     } else {
       hilog.info(0x0000, Index.TAG, 'local library: %{public}d book(s)', this.books.length);
+      this.resumeLastEntry();
     }
   }
 
@@ -1627,6 +1634,36 @@ struct Index {
         .padding({ top: 4, bottom: 4 })
 
         Row() {
+          Text('启动时回到上次收听的位置')
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.resumeLast })
+            .selectedColor(this.theme.accent)
+            .onChange((isOn: boolean) => {
+              this.resumeLast = isOn;
+              this.saveSettings();
+            })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Row() {
+          Text('书架只显示有字幕的书')
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.showOnlyWithSubtitle })
+            .selectedColor(this.theme.accent)
+            .onChange((isOn: boolean) => {
+              this.showOnlyWithSubtitle = isOn;
+              this.saveSettings();
+            })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Row() {
           Text('播完自动下一章')
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
@@ -1682,7 +1719,7 @@ struct Index {
 
   // ==================== 逻辑：播放 ====================
 
-  private async openChapter(chapter: Chapter): Promise<void> {
+  private async openChapter(chapter: Chapter, autoPlay: boolean = true): Promise<void> {
     this.selectedChapter = chapter;
     this.currentText = '';
     this.secondaryText = '';
@@ -1730,11 +1767,14 @@ struct Index {
             this.applyCurrentLine();
           }
           player.setVolume(this.volume);
-          // 自动开始播放（点书即听，和桌面版一致）
-          player.play();
+          // 点书即听；启动恢复上次位置时 autoPlay=false，避免一开 App 就出声
+          if (autoPlay) {
+            player.play();
+          }
 
           // 接上系统播控：后台继续播放 + 锁屏/播控中心显示当前这句字幕
           this.startMediaSession();
+          this.saveLastPlayed(chapter);
         } else if (state === 'playing') {
           this.isPlaying = true;
           this.startTicker();
@@ -1796,6 +1836,49 @@ struct Index {
       const err = error as BusinessError;
       this.statusText = `打开音频失败：${err.message}`;
       hilog.error(0x0000, Index.TAG, 'open failed: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  /** 记住最后听的章节（下次启动直接回到这里） */
+  private saveLastPlayed(chapter: Chapter): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync('last_audio', chapter.audioPath);
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'save last played failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  /** 启动时恢复上次那本书（不自动播放，停在上次的位置） */
+  private resumeLastEntry(): void {
+    if (!this.resumeLast || this.books.length === 0) {
+      return;
+    }
+
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      const lastAudio = store.getSync('last_audio', '') as string;
+      if (lastAudio.length === 0) {
+        return;
+      }
+
+      for (const book of this.books) {
+        for (const chapter of book.chapters) {
+          if (chapter.audioPath === lastAudio) {
+            hilog.info(0x0000, Index.TAG, 'resume last: %{public}s / %{public}s',
+              book.title, chapter.title);
+            this.selectedBook = book;
+            this.openChapter(chapter, false);
+            return;
+          }
+        }
+      }
+      hilog.info(0x0000, Index.TAG, 'resume last: not found (%{public}s)', lastAudio);
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'resume last failed: %{public}s', JSON.stringify(error));
     }
   }
 
@@ -1976,9 +2059,12 @@ struct Index {
 
   private loadSubtitle(path: string): void {
     try {
+      const parseStart = Date.now();
       const content = this.readTextByUri(path);
       const warnings: string[] = [];
       const lines = SrtParser.parse(content, warnings);
+      hilog.info(0x0000, Index.TAG, 'subtitle parse: %{public}d chars -> %{public}d lines in %{public}d ms',
+        content.length, lines.length, Date.now() - parseStart);
 
       this.synchronizer.load(lines);
       this.lines = lines;
