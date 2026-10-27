@@ -1,10 +1,11 @@
-import { fileIo, picker, fileShare } from '@kit.CoreFileKit';
+import { fileIo, picker, fileShare, fileUri } from '@kit.CoreFileKit';
 import { preferences } from '@kit.ArkData';
 import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { media } from '@kit.MediaKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
+import { image } from '@kit.ImageKit';
 import { Book, Chapter, LibraryScanner } from '../model/Library';
 import { BookStore } from '../model/BookStore';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
@@ -13,9 +14,19 @@ import { Timecode } from '../model/Timecode';
 const PREFS_NAME: string = 'kataru_settings';
 const PREF_KEY_ROOT: string = 'library_uri';
 
+/** 一本书的封面（解码成 PixelMap，Image 才能画出来） */
+class CoverItem {
+  path: string = '';
+  pixel: image.PixelMap | undefined = undefined;
+
+  constructor(path: string, pixel: image.PixelMap) {
+    this.path = path;
+    this.pixel = pixel;
+  }
+}
+
 /** 可选字体（不存在时 ArkUI 会自动回退到系统字体） */
-class FontChoice {
-  name: string = '';
+class FontChoice {  name: string = '';
   value: string = '';
 
   constructor(name: string, value: string) {
@@ -54,6 +65,7 @@ struct Index {
   @State currentText: string = '';
   @State lines: SubtitleLine[] = [];
   @State currentIndex: number = -1;
+  @State covers: CoverItem[] = [];
 
   // ---------- 界面 ----------
   @State currentTab: number = 0;
@@ -87,13 +99,58 @@ struct Index {
       this.libraryRoot = sandboxRoot;
     }
 
+    this.refreshLibrary();
+  }
+
+  /**
+   * 统一的书库刷新：**整表重建**，不是往里追加。
+   *
+   * 之前是"扫到就 push"，所以用户把书移动/删除之后，书架里会残留已经不存在的条目。
+   * 现在每次都从磁盘重新扫，扫到什么就是什么，并且把指向已消失书本的选中状态清掉。
+   */
+  private refreshLibrary(): void {
     const books = LibraryScanner.scan(this.libraryRoot);
     this.books = books;
+    this.rebuildCovers();
+    this.pruneSelection();
+
     this.statusText = books.length > 0
       ? ('书库：' + books.length + ' 本')
       : '点「选择书库文件夹」或「添加书本」';
-    hilog.info(0x0000, Index.TAG, 'startup scan: %{public}d book(s) at %{public}s',
+    hilog.info(0x0000, Index.TAG, 'refresh: %{public}d book(s) at %{public}s',
       books.length, this.libraryRoot);
+  }
+
+  /** 书/章被移动或删除后，清掉已经失效的选中状态，避免点到不存在的文件 */
+  private pruneSelection(): void {
+    const book = this.selectedBook;
+    if (book === null) {
+      return;
+    }
+
+    let found = false;
+    for (const item of this.books) {
+      if (item.folderPath === book.folderPath && item.title === book.title) {
+        found = true;
+        break;
+      }
+    }
+
+    if (found) {
+      return;
+    }
+
+    hilog.info(0x0000, Index.TAG, 'prune: book gone, clearing selection');
+    this.stopTicker();
+    this.releasePlayer();
+    this.selectedBook = null;
+    this.selectedChapter = null;
+    this.lines = [];
+    this.currentText = '';
+    this.currentIndex = -1;
+    this.positionMs = 0;
+    this.durationMs = 0;
+    this.isPlaying = false;
   }
 
   /** 读上次选的书库文件夹；读不出来（授权失效）就返回空 */
@@ -106,11 +163,17 @@ struct Index {
         return '';
       }
 
-      const entries = fileIo.listFileSync(saved);
-      hilog.info(0x0000, Index.TAG, 'saved root OK: %{public}s (%{public}d entries)', saved, entries.length);
-      return saved;
+      // 存的是 URI，但列目录要用真实路径，所以这里也走一遍解析
+      const resolved = this.resolveReadableDir(saved);
+      if (resolved.length === 0) {
+        hilog.warn(0x0000, Index.TAG, 'saved root unusable (permission lost?): %{public}s', saved);
+        return '';
+      }
+
+      hilog.info(0x0000, Index.TAG, 'saved root OK: %{public}s', resolved);
+      return resolved;
     } catch (error) {
-      hilog.warn(0x0000, Index.TAG, 'saved root unusable: %{public}s', JSON.stringify(error));
+      hilog.warn(0x0000, Index.TAG, 'load saved root failed: %{public}s', JSON.stringify(error));
       return '';
     }
   }
@@ -129,6 +192,75 @@ struct Index {
     }
   }
 
+  /** 把路径解码成 PixelMap（Image 组件对沙箱外路径不认，必须先解码） */
+  private loadPixelMap(path: string): image.PixelMap | undefined {
+    try {
+      const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+      try {
+        const source = image.createImageSource(file.fd);
+
+        // 按原图比例降采样：只限制最长边，两个方向都传死尺寸会把图压扁（拉伸的根源）
+        let options: image.DecodingOptions = {};
+        try {
+          const info = source.getImageInfoSync();
+          const maxEdge = 640;
+          const scale = Math.max(info.size.width, info.size.height) / maxEdge;
+          if (scale > 1) {
+            options.desiredSize = {
+              width: Math.round(info.size.width / scale),
+              height: Math.round(info.size.height / scale)
+            };
+          }
+          hilog.info(0x0000, Index.TAG, 'cover info: %{public}dx%{public}d',
+            info.size.width, info.size.height);
+        } catch (error) {
+          hilog.warn(0x0000, Index.TAG, 'cover info failed, decode as-is');
+        }
+
+        const pixel = source.createPixelMapSync(options);
+        source.release();
+        hilog.info(0x0000, Index.TAG, 'cover OK: %{public}s', path);
+        return pixel;
+      } finally {
+        fileIo.closeSync(file);
+      }
+    } catch (error) {
+      const err = error as BusinessError;
+      hilog.error(0x0000, Index.TAG, 'cover FAILED: %{public}s code=%{public}d msg=%{public}s',
+        path, err.code, err.message);
+      return undefined;
+    }
+  }
+
+  /** 重建封面缓存（每次扫描/导入后调用） */
+  private rebuildCovers(): void {
+    const list: CoverItem[] = [];
+    for (const book of this.books) {
+      if (book.coverPath.length === 0) {
+        continue;
+      }
+      const pixel = this.loadPixelMap(book.coverPath);
+      if (pixel !== undefined) {
+        list.push(new CoverItem(book.coverPath, pixel));
+      }
+    }
+    this.covers = list;
+    hilog.info(0x0000, Index.TAG, 'covers: %{public}d/%{public}d loaded', list.length, this.books.length);
+  }
+
+  /** 按路径取封面 */
+  private coverFor(path: string): image.PixelMap | undefined {
+    if (path.length === 0) {
+      return undefined;
+    }
+    for (const item of this.covers) {
+      if (item.path === path) {
+        return item.pixel;
+      }
+    }
+    return undefined;
+  }
+
   /** 记住用户选的书库文件夹 */
   private saveRoot(uri: string): void {
     try {
@@ -141,7 +273,7 @@ struct Index {
     }
   }
 
-  /** 重新扫描当前书库（沙箱目录，或用户选的文件夹 URI） */
+  /** 手动重新扫描（书移动/删除后点这个，或启动时用） */
   private rescanSandbox(): void {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const sandboxRoot = context.filesDir + '/books';
@@ -152,12 +284,57 @@ struct Index {
       // 目录已存在会报错，忽略
     }
 
-    const root = this.libraryRoot.length > 0 ? this.libraryRoot : sandboxRoot;
-    const books = LibraryScanner.scan(root);
-    this.books = books;
-    this.libraryRoot = root;
-    this.statusText = books.length > 0 ? ('书库：' + books.length + ' 本') : '还没有书，点「添加书本」导入';
-    hilog.info(0x0000, Index.TAG, 'rescan: %{public}d book(s) at %{public}s', books.length, root);
+    if (this.libraryRoot.length === 0) {
+      this.libraryRoot = sandboxRoot;
+    }
+
+    this.refreshLibrary();
+  }
+
+  /**
+   * 把一个 picker 返回的目录 URI 变成"真的能列目录"的路径。
+   *
+   * picker 给的是 file://docs/storage/Users/currentUser/Download/... 这种 URI，
+   * 直接喂给 fileIo.listFileSync 会报 13900001（没权限）。用 FileUri 取出 path
+   * （/storage/Users/currentUser/Download/...）之后就能正常列了。
+   *
+   * 依次尝试：原始 URI → FileUri.path → getFullDirectoryUri，哪个能列就用哪个。
+   */
+  private resolveReadableDir(uri: string): string {
+    const candidates: string[] = [uri];
+
+    try {
+      const parsed = new fileUri.FileUri(uri);
+      candidates.push(parsed.path);
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'FileUri(uri).path failed: %{public}s', JSON.stringify(error));
+    }
+
+    try {
+      const parsed = new fileUri.FileUri(uri);
+      const full = parsed.getFullDirectoryUri();
+      if (full !== undefined && full.length > 0) {
+        candidates.push(full);
+        candidates.push(new fileUri.FileUri(full).path);
+      }
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'getFullDirectoryUri failed: %{public}s', JSON.stringify(error));
+    }
+
+    for (const candidate of candidates) {
+      try {
+        const entries = fileIo.listFileSync(candidate);
+        hilog.info(0x0000, Index.TAG, 'list OK: %{public}s (%{public}d entries)',
+          candidate, entries.length);
+        return candidate;
+      } catch (error) {
+        const err = error as BusinessError;
+        hilog.warn(0x0000, Index.TAG, 'list FAILED: %{public}s code=%{public}d',
+          candidate, err.code);
+      }
+    }
+
+    return '';
   }
 
   /**
@@ -188,16 +365,16 @@ struct Index {
       const uri = uris[0];
       hilog.info(0x0000, Index.TAG, 'picked folder uri: %{public}s', uri);
 
-      // 先确认这个目录真的能读，否则后面扫描是空的
-      let entries: string[] = [];
-      try {
-        entries = fileIo.listFileSync(uri);
-      } catch (error) {
-        hilog.error(0x0000, Index.TAG, 'list picked folder failed: %{public}s', JSON.stringify(error));
-        this.statusText = '这个文件夹读不了（系统没给权限），换个位置再试';
+      // 关键：picker 返回的是 file://docs/... 这种 URI，fileIo.listFileSync 对 URI
+      // 形式的目录支持不好（实测报 13900001 没权限），必须用 FileUri 转成真实路径
+      // /storage/Users/currentUser/... 再去列目录。
+      const resolved = this.resolveReadableDir(uri);
+      if (resolved.length === 0) {
+        this.statusText = '这个文件夹列不出来（试了 URI 和真实路径都不行），看日志';
         return;
       }
-      hilog.info(0x0000, Index.TAG, 'picked folder has %{public}d entries', entries.length);
+
+      hilog.info(0x0000, Index.TAG, 'resolved dir: %{public}s', resolved);
 
       // 持久化授权：不加这一步，App 重启后就又没权限了
       try {
@@ -211,16 +388,15 @@ struct Index {
         hilog.warn(0x0000, Index.TAG, 'persist permission failed: %{public}s', JSON.stringify(error));
       }
 
-      this.libraryRoot = uri;
+      // 用真实路径当书库根：这样下面所有的 listFile / openSync / Image 都能直接用
+      this.libraryRoot = resolved;
       this.saveRoot(uri);
-      this.statusText = '书库文件夹已设为：' + uri;
+      this.refreshLibrary();
 
-      const pickedBooks = LibraryScanner.scan(uri);
-      this.books = pickedBooks;
-      hilog.info(0x0000, Index.TAG, 'scan picked folder: %{public}d book(s)', pickedBooks.length);
-
-      if (pickedBooks.length === 0) {
-        this.statusText = '这个文件夹里没有找到书（每本书应该是一个子文件夹，里面放音频和字幕）';
+      if (this.books.length === 0) {
+        this.statusText = '这个文件夹里没找到书（每本书应该是一个子文件夹，里面放音频和字幕）';
+      } else {
+        this.statusText = '书库文件夹已设为：' + resolved;
       }
     } catch (error) {
       const err = error as BusinessError;
@@ -280,14 +456,12 @@ struct Index {
       }
 
       const context0 = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const sandboxRoot = `${context0.filesDir}/books`;
-      const scanned = LibraryScanner.scan(sandboxRoot);
-      if (scanned.length > 0) {
-        this.books = scanned;
-        this.libraryRoot = sandboxRoot;
-        this.currentTab = 0; // 导入完自动跳到书库，立刻看到结果
-        this.statusText = `已导入 ${scanned.length} 本书`;
-      }
+      const sandboxRoot = context0.filesDir + '/books';
+
+      // 导入完成后把书库根切到沙箱（复制的书都在这），整表重建
+      this.libraryRoot = sandboxRoot;
+      this.refreshLibrary();
+      this.currentTab = 0; // 导入完自动跳到书库，立刻看到结果
 
       let chapters = 0;
       let subs = 0;
@@ -566,12 +740,12 @@ struct Index {
             GridItem() {
               Column() {
                 Stack() {
-                  if (book.hasCover) {
-                    Image(book.coverPath)
+                  if (this.coverFor(book.coverPath) !== undefined) {
+                    Image(this.coverFor(book.coverPath))
                       .width('100%')
-                      .height(150)
+                      .aspectRatio(0.83)
                       .objectFit(ImageFit.Cover)
-                      .borderRadius(8)
+                      .borderRadius(6)
                   } else {
                     Column() {
                       Text('📖')
@@ -582,10 +756,10 @@ struct Index {
                         .margin({ top: 6 })
                     }
                     .width('100%')
-                    .height(150)
+                    .aspectRatio(0.83)
                     .justifyContent(FlexAlign.Center)
                     .backgroundColor($r('app.color.panel_background'))
-                    .borderRadius(8)
+                    .borderRadius(6)
                   }
                 }
                 .width('100%')
@@ -630,22 +804,22 @@ struct Index {
   @Builder
   PlayerPage() {
     Column() {
-      if (this.selectedBook !== null && this.selectedBook.hasCover) {
-        Image(this.selectedBook.coverPath)
-          .width(140)
-          .aspectRatio(0.72)
+      if (this.selectedBook !== null && this.coverFor(this.selectedBook.coverPath) !== undefined) {
+        Image(this.coverFor(this.selectedBook.coverPath))
+          .width(150)
+          .aspectRatio(0.83)
           .objectFit(ImageFit.Cover)
-          .borderRadius(10)
+          .borderRadius(8)
           .margin({ top: 8 })
       } else {
         Column() {
           Text('📖').fontSize(36)
         }
-        .width(140)
-        .aspectRatio(0.72)
+        .width(150)
+        .aspectRatio(0.83)
         .justifyContent(FlexAlign.Center)
         .backgroundColor($r('app.color.panel_background'))
-        .borderRadius(10)
+        .borderRadius(8)
         .margin({ top: 8 })
       }
 
