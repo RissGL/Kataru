@@ -1,187 +1,135 @@
-# KATARU · HarmonyOS 版
+# KATARU · HarmonyOS
 
-桌面版 KATARU（WPF/C#）的鸿蒙重写版。**不是移植**——C#/WPF 在鸿蒙上跑不了，
-这里是用 **ArkTS / ArkUI** 重写，但**算法和数据结构沿用桌面上那套**（桌面版已有 269 项自检覆盖）。
+桌面版 KATARU 有声书播放器的鸿蒙重写版。技术栈：**ArkTS / ArkUI（Stage 模型）**，不依赖任何第三方库。
+算法和数据结构沿用桌面版（桌面版有 269 项自检覆盖）。
 
-> ✅ **当前状态：命令行构建通过**（`hvigor assembleHap` → BUILD SUCCESSFUL，产出 503 KB 的 HAP）
->
-> **目标 API：HarmonyOS 6.0.0 / API 20**（`minAPIVersion = 60000020`），
-> 可在 HarmonyOS 6.1.0 / API 24 的真机（MIA-AL00）上安装运行。
-
-## 真机验证过的状态（MIA-AL00 / HarmonyOS 6.1 / API 24）
-
-- ✅ 安装成功、启动成功（`ability onCreate` / `window ready`，无崩溃）
-- ✅ 四个模式页：书库 / 播放 / 阅读 / 设置（底部 Tabs）
-- ✅ 书库扫描：一本书一个文件夹，自动配同名字幕，找封面（cover.png 等）
-- ✅ 字幕字号/字体可调
-- ⚠️ **公共 Download 目录不能直接读**：`/storage/media/100/local/files/Docs/Download`
-  连 shell 都 `mkdir: Permission denied`，App 也读不到。
-  所以改成：**用户用系统文件选择器选一次文件夹**，再用 `fileShare.persistPermission`
-  持久化授权，之后每次启动直接用（存在 preferences 里）。
-
-## 当前进度
-
-已完成（可直接跑）：
-
-| 模块 | 文件 | 说明 |
-| --- | --- | --- |
-| SRT 解析 | `entry/src/main/ets/model/SrtParser.ets` | BOM / CRLF / 序号缺失 / 多行字幕 / 逗号小数点 |
-| 字幕同步 | `model/SubtitleSynchronizer.ets` | 播放时游标前进 O(1)，跳转时二分重定位 |
-| 时间码 | `model/Timecode.ets` | 解析 + 格式化 |
-| 语言识别 | `model/SubtitleLanguage.ets` | `xx.zh.srt` / `xx.chs.srt` / `xx.ja.srt` 等 |
-| 主界面 | `pages/Index.ets` | 选音频 + 选字幕、播放/暂停、±10s、进度条、大字幕、阅读列表自动高亮滚动 |
-
-还没做（下一步）：
-
-- 多语言双语轨道（模型已就绪，界面还没接）
-- 媒体库扫描（桌面版是扫文件夹；鸿蒙这里还要处理文件访问权限）
-- 锁屏/通知栏播控（AVSession）+ 后台播放
-- 播放进度记忆（preferences）
-- 桌面版那个"悬浮字幕"在手机上做不了（全局悬浮窗要系统级权限），
-  替代方案是**应用小窗**（用户自己把 app 拖成小窗）
-
-## 怎么跑起来
-
-### 0. 先确认手机是鸿蒙 NEXT
-
-设置 → 关于手机 → 看「HarmonyOS 版本」：
-
-- **HarmonyOS NEXT 5.x / 6.x** → 可以装这个工程
-- **HarmonyOS 4.x 及更早**（本质是安卓底座）→ 装不了，这个工程是 NEXT 的 HAP
-
-### 1. 命令行构建（不用开 IDE）
+## 构建
 
 ```powershell
-cd D:\GitHubFiles\AudioBookPlayer\AudioBookPlayer\harmony\KATARU
 .\build.ps1
+# 产出：entry\build\default\outputs\default\entry-default-signed.hap
 ```
 
-产物：`entry\build\default\outputs\default\entry-default-unsigned.hap`
+构建脚本用 DevEco 自带的 JBR / Node / ohpm / hvigor，并设置 `DEVECO_SDK_HOME`。
 
-脚本会自动使用 DevEco 自带的 java / node / hvigor。
-DevEco 装在别处就改脚本顶部的 `$DevEco` 变量。
+## 安装到真机
 
-### 2. 用 DevEco 打开工程
+```powershell
+hdc install -r entry\build\default\outputs\default\entry-default-signed.hap
+```
 
-`File → Open` → 选 `harmony\KATARU` → 等右下角 Sync 完成。
+实测设备：MIA-AL00 · HarmonyOS 6.1.0 · API 24 · `compatibleSdkVersion` 用 `6.0.0(20)`。
 
-若提示「SDK 版本不匹配 / 需要下载 API 12」，可以：
+## 书库：一次授权，永久生效
 
-- 让它下载（约 1GB），或
-- 让我把 `build-profile.json5` 的 `compatibleSdkVersion` 改成你已装的 API 26
-
-### 3. 配签名（必须，否则装不进真机）
-
-1. 右上角 **Sign In** 登录华为账号
-2. `File → Project Structure → Signing Configs`
-3. 勾 **Automatically generate signature** → Apply
-
-> HarmonyOS NEXT 侧载调试一般要求账号**实名认证**，没认证这步会失败。
-
-### 4. 手机准备
-
-1. 设置 → 关于手机 → 连点「版本号」7 次 → 开启开发者模式
-2. 设置 → 系统 → 开发者选项 → 打开 **USB 调试**
-3. 数据线连电脑 → 手机弹「允许 USB 调试」→ 允许
-
-### 5. 运行
-
-DevEco 右上角设备下拉选到你的手机 → 点绿色三角 **Run 'entry'**。
-
-首屏操作顺序：**选音频** → **选字幕**（.srt）→ **播放**。
-中间大字幕会跟着走，下面的阅读列表自动高亮并滚动。
-
-### 6. 出问题怎么办
-
-- **构建报错** → 把 DevEco 的 Build 窗口文字贴给我
-- **App 崩溃 / 没声音 / 字幕不显示** → DevEco 底部 **HiLog** 窗口，过滤 `KATARU`，
-  里面的 `state: xxx` 会显示 AVPlayer 状态机走到哪一步
-
-## 构建环境（本机实测）
-
-| 组件 | 位置 / 版本 |
-| --- | --- |
-| DevEco Studio | `D:\HormanyOS\DevEco Studio`（26.0.0.851） |
-| SDK | `sdk\default\openharmony`（API 26，platformVersion 26.0.0） |
-| 目标版本 | `compatibleSdkVersion` / `targetSdkVersion` = **`6.0.0(20)`** |
-| 实测设备 | MIA-AL00 · HarmonyOS 6.1.0 · API 24 |
-| hvigor | 6.26.8 |
-| ohpm | 26.0.0.630 |
-| Node | 24.14.1（DevEco 自带） |
-| JBR | 25.0.2（DevEco 自带，打包阶段需要） |
-
-## 和桌面版的关系
-
-- 算法、数据结构、语言识别规则与桌面版一致
-- 配色（黑 / 米白 / 暗红 / 金）在 `resources/base/element/color.json` 里，和桌面版同一套值
-- 图标复用桌面版的 app.ico（从 ICO 里取的 256×256 PNG 帧）
-- m4b 的章节 / 封面解析（桌面版 `MediaTagReader`）还没移植——AVPlayer 能直接播 m4b 音频，
-  但读章节要靠自己解析 MP4 box，这块可以之后搬过来
-
-## 关于 SDK 版本配对（踩过的坑）
-
-`build-profile.json5` 里的 `compatibleSdkVersion` / `targetSdkVersion` **不是随便写数字就行**，
-hvigor 会拿它跟已安装的 SDK 做**精确配对校验**。本机实测：
-
-| 写法 | 结果 |
-| --- | --- |
-| `24` / `26`（纯数字） | ❌ Schema validate failed |
-| `"6.0.0(24)"` | ❌ platform version 与 API version 不匹配 |
-| `"6.1.0(24)"` | ❌ 同上 |
-| `"6.1.0(26)"` | ❌ 同上 |
-| `"26.0.0(26)"` | ❌ 同上 |
-| **`"6.0.0(20)"`** | ✅ BUILD SUCCESSFUL |
-
-也就是说：**只有 SDK 认得的「平台版本(API 等级)」组合才能用**。
-想换成别的版本，得先用 DevEco 的 SDK Manager 把对应的 SDK 装上。
-
-## 安装到真机必须签名
-
-`bm install` 报 `error: no signature file (code:9568320)` = HAP 未签名。
-在 DevEco 中文版里：`文件(File) → 项目结构(Project Structure) → 签名配置(Signing Configs)`
-→ 勾选「**自动生成签名**」（也可直接点报错里的「**打开签名配置**」链接）。
-
-前置条件：华为账号已登录 + **已实名认证**，且手机已连接（自动签名要把设备 UDID 写进 profile）。
-## 手机上怎么放书（重要）
-
-1. 用手机自带「文件管理」在 **Download** 下新建文件夹 **KATARU Book**（USB 连电脑传也可以）
-2. 里面一个书一个文件夹，例如：
-   ```
-   Download/KATARU Book/化物語 上/01 ひたぎクラブ.mp3
-   Download/KATARU Book/化物語 上/01 ひたぎクラブ.srt
-   Download/KATARU Book/化物語 上/cover.png
-   ```
-3. 打开 App → **设置 → 选择书库文件夹** → 选到 `KATARU Book` → 授权
-4. 回到**书库**，会自动扫描出书；点书进入播放
-
-> 为什么必须手动选一次：鸿蒙把公共下载目录保护起来了，第三方 App 拿不到
-> 「直接按路径读」的权限，只能用系统选择器授权。选一次就记住。
-
-## 还没做
-
-- **灵动岛 / 实况窗**：需要 LiveViewKit + **申请正式权限**（Huawei 侧审批），
-  而且必须真机调试。单独一轮做。
-- 双语对照（多语言轨道）：`SubtitleLanguage.ets` 已就绪，阅读页还没接。
-- 后台播放 / 锁屏播控（AVSession）、进度记忆（preferences 已用上，播放进度还没存）。
-## 为什么是"导入式书库"（重要）
-
-鸿蒙 6.1 上第三方 App **读不到公共 Download 目录**，实测三条路都堵死：
+鸿蒙手机**不给第三方 App 持久访问文件夹**，全部实测过：
 
 | 尝试 | 结果 |
 | --- | --- |
-| 按路径直读 `/storage/media/100/local/files/Docs/Download/...` | `code 13900001` Operation not permitted |
-| 申请 `ohos.permission.READ_WRITE_DOWNLOAD_DIRECTORY` | `authResults = 2`（系统拒绝，受限权限） |
-| 文件选择器「选文件夹」`DocumentSelectMode.FOLDER` | 「该功能暂不支持」（该机型未开放） |
-| shell 里 `mkdir` 该目录 | Permission denied |
+| 选文件夹 | ✅ 系统 picker 支持（日志里是 `PathSelectTree`） |
+| 把授权持久化 | ❌ `persistPermission` → `URI forbid to be persisted!` |
+| App 重启后重读原路径 | ❌ `13900001` |
+| 按路径直读公共 Download | ❌ `13900001`；`READ_WRITE_DOWNLOAD_DIRECTORY` 申请返回 `2`（系统不授予） |
+| hdc / shell 访问 App 沙箱 | ❌ `Permission denied` |
 
-**所以只有一条路**：用系统选择器选**具体文件**（这个所有机型都支持），
-App 用 `fileShare.persistPermission` 持久化授权，把 URI 存进 preferences。
+所以采用**同步**方案：
 
-### 用户操作
+```
+选择书库文件夹（一次）
+   ↓
+复制进 App 私有目录 filesDir/books/<书名>/
+   ↓
+之后永久可用（不依赖任何授权，重启/重装都不丢）
+```
 
-1. 书库页点 **「导入书本」**
-2. 一次多选这本书的文件：**音频 (.m4b/.mp3) + 字幕 (.srt) + 封面 (png)**
-3. 自动配对（同名 / 同名+语言后缀）并存下来
-4. 之后直接点书就播放，重启也不丢（URI 授权已持久化）
+- **同步规则**：源里有什么就有什么。新书复制、改动过（大小不同）覆盖、**源里删掉的书在本地也删除**，不留指向已消失文件的"幽灵书"。
+- **移动 / 删除 / 改名**：点一次「选择书库文件夹」重新同步即可，书架按磁盘实际内容整表重建（`refreshLibrary`）。
+- **空间**：会多占一份。删掉源文件不影响 App 使用。
 
-> 这是鸿蒙平台限制，不是偷懒。桌面版能扫目录是因为 Windows 桌面没有这层沙箱。
+## 功能对照（桌面版 → 鸿蒙版）
+
+| 功能 | 状态 |
+| --- | --- |
+| 媒体库（一本书一个文件夹，自动往下找一层） | ✅ |
+| 封面（同名图 / cover.png；0.83 比例裁切，不拉伸） | ✅ |
+| 换封面 / 恢复自动封面 | ✅ |
+| 播放 / 暂停 / 拖动进度 / 快退快进（秒数可配 5–30s） | ✅ |
+| 音量 | ✅ |
+| 章节切换 | ✅ |
+| m4b 内嵌章节表（chpl）解析 + 跳章 | ✅ |
+| m4b 直接播放（`AVDataSrcDescriptor`，不需要改名或复制） | ✅ |
+| 阅读页逐句高亮、自动滚动、点击跳转 | ✅ |
+| 双语对照（主字幕 + 译文，可关） | ✅ |
+| 字号 / 字体 / 颜色 / 加粗 / 描边粗细 / 译文大小 | ✅ |
+| 内置思源宋体（Regular + Bold，约 47 MB） | ✅ |
+| 5 套配色主题 | ✅ |
+| 收藏 / 书名搜索 / 只看收藏 / 只看有字幕 | ✅ |
+| 进度记忆 / 启动恢复上次位置 / 播完自动下一章 | ✅ |
+| 书架卡片进度条 + 顶栏总体进度 | ✅ |
+| 系统播控（后台播放、锁屏与播控中心显示当前字幕） | ✅ |
+| 实况窗 / 灵动胶囊字幕（`LiveViewKit`） | ✅ 代码已接，本机 `isLiveViewEnabled` 返回 yes |
+| 清除播放记录 / 恢复默认设置 | ✅ |
+| 播放倍速 | ⛔ 桌面版已移除，保持一致 |
+| 全局热键 | ⛔ 桌面专有 |
+
+### 悬浮字幕的边界（重要）
+
+| 方案 | 可行性 |
+| --- | --- |
+| 悬浮窗覆盖其他 App | ❌ `SYSTEM_FLOAT_WINDOW` 是系统权限，普通应用拿不到 |
+| 画中画显示文字 | ❌ PiP 只接受 `XComponent` 视频，没有文字模板 |
+| **实况窗 / 灵动胶囊** | ✅ 系统给第三方开的正规口子：状态栏胶囊 + 锁屏显示当前字幕 |
+| **AVSession 播控中心** | ✅ 锁屏/播控卡片显示"书名 + 当前这句字幕" |
+
+## 目录
+
+```
+entry/src/main/ets/
+├── entryability/EntryAbility.ets     入口（含分享接收）
+├── model/
+│   ├── Library.ets                   书库扫描（自然排序、字幕配对、封面查找）
+│   ├── SrtParser.ets                 SRT 解析
+│   ├── SubtitleSynchronizer.ets      时间轴同步
+│   ├── SubtitleLanguage.ets          语言识别（.zh.srt 之类）
+│   ├── Timecode.ets                  时间格式化
+│   ├── Mp4Chapters.ets               MP4/M4B chpl 章节表解析
+│   ├── Theme.ets                     5 套配色 + 持久化
+│   ├── MediaSession.ets              AVSession（后台播放 / 锁屏字幕）
+│   └── LiveSubtitle.ets              实况窗 / 灵动胶囊字幕
+└── pages/Index.ets                   四个模式页（书库 / 播放 / 阅读 / 设置）
+```
+
+## 已知平台坑（都踩过并绕过）
+
+1. `fileIo.copyFile(fd, path)` **会成功但写出 0 字节文件** → 一律用 4 MB 分块读写 + 字节数校验。
+2. `createPixelMapSync` 在真机上返回 `undefined` → 用异步 `createPixelMap`。
+3. `Image('路径字符串')` 对沙箱外路径静默失败 → 先解码成 `PixelMap`。
+4. `listFileSync` 不认 `file://docs/...` URI → 用 `fileUri.FileUri(uri).path` 转真实路径。
+5. `tabIndex`、`outlineColor` 等 ArkTS 内置属性名不能当成员名。
+6. ArkTS 禁用 `for..in`、`Function.apply`、无类型对象字面量。
+
+## 调试
+
+```powershell
+# 应用日志
+hdc shell "hilog -x | grep 'A00000/com.rissgl.kataru'"
+
+# 清日志后重启
+hdc shell "hilog -r"; hdc shell aa force-stop com.rissgl.kataru; hdc shell aa start -a EntryAbility -b com.rissgl.kataru
+
+# 截图
+hdc shell "snapshot_display -f /data/local/tmp/s.jpeg"; hdc file recv /data/local/tmp/s.jpeg .
+```
+
+关键日志行：
+
+```
+refresh: N book(s) at /data/storage/el2/base/haps/entry/files/books
+open audio: ... (710181178 bytes)
+setMediaSource(dataSrc) for ...
+state: prepared / prepared: duration=43864295
+subtitle parse: 1153487 chars -> N lines in M ms
+cover info: 1000x1000 -> 640x640 / covers: 1/1 loaded
+liveView enabled: yes
+avsession activated
+```
