@@ -6,12 +6,17 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { wantAgent, Want } from '@kit.AbilityKit';
+import type { WantAgent } from '@ohos.wantAgent';
 import { Book, Chapter, LibraryScanner } from '../model/Library';
 import { BookStore } from '../model/BookStore';
 import { MediaSession } from '../model/MediaSession';
 import { LiveSubtitle } from '../model/LiveSubtitle';
+import { NowPlayingNotification } from '../model/NowPlayingNotification';
 import { THEME_PRESETS, ThemeColors, ThemePreset, ThemeStore } from '../model/Theme';
 import { AudioChapterMark, Mp4Chapters } from '../model/Mp4Chapters';
+import { ColorUtil, Hsl } from '../model/ColorUtil';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
 import { SubtitleSynchronizer } from '../model/SubtitleSynchronizer';
 import { Timecode } from '../model/Timecode';
@@ -49,6 +54,37 @@ class CoverItem {
   }
 }
 
+/** 一个可调色的槽位 */
+class ThemeSlot {
+  key: string = '';
+  label: string = '';
+
+  constructor(key: string, label: string) {
+    this.key = key;
+    this.label = label;
+  }
+}
+
+const THEME_SLOTS: ThemeSlot[] = [
+  new ThemeSlot('bg', '背景'),
+  new ThemeSlot('accent', '主色'),
+  new ThemeSlot('gold', '金色'),
+  new ThemeSlot('text', '文字'),
+  new ThemeSlot('subtitle', '字幕色'),
+  new ThemeSlot('outline', '描边色'),
+];
+
+/** 自定义主题（用户调过的配色，存 preferences） */
+class CustomTheme {
+  pageBackground: string = '#121011';
+  panelBackground: string = '#1A1718';
+  textPrimary: string = '#F1EBE1';
+  textSecondary: string = '#B5AFA6';
+  accent: string = '#9E2B25';
+  gold: string = '#C9A227';
+  borderSoft: string = '#3A3330';
+}
+
 /** 可选字体（不存在时 ArkUI 会自动回退到系统字体） */
 class FontChoice {  name: string = '';
   value: string = '';
@@ -76,10 +112,13 @@ struct Index {
   private readingScroller: Scroller = new Scroller();
   private lastProgressSaveMs: number = 0;
   private currentAudioFile: fileIo.File | null = null;
+  private backgroundTaskActive: boolean = false;
+  private backgroundWantAgent: WantAgent | null = null;
   private subtitleCachePath: string = '';
   private subtitleCacheLines: SubtitleLine[] = [];
   private mediaSession: MediaSession = new MediaSession();
   private liveSubtitle: LiveSubtitle = new LiveSubtitle();
+  private nowPlaying: NowPlayingNotification = new NowPlayingNotification();
   @State liveViewAvailable: boolean = false;
   @State themeIndex: number = 0;
   @State theme: ThemeColors = THEME_PRESETS[0].colors;
@@ -96,6 +135,13 @@ struct Index {
   @State subtitleOutlineWidth: number = 2;
   @State subtitleOutlineColor: string = '#000000';
   @State secondaryScale: number = 0.68;
+  /** 当前展开调色的槽位：'' | 'subtitle' | 'outline' | 'bg' | 'accent' | 'gold' | 'text' */
+  @State editingSlot: string = '';
+  @State editH: number = 0;
+  @State editS: number = 50;
+  @State editL: number = 50;
+  /** 字重档位：300/400/500/700/900 */
+  @State fontWeights: number[] = [300, 400, 500, 700, 900];
   @State favorites: string[] = [];
 
   // ---------- 媒体库 ----------
@@ -129,6 +175,9 @@ struct Index {
   @State fontFamilyValue: string = 'HarmonyOS Sans SC';
   @State subtitleColor: string = '#FFFFFF';
   @State subtitleBold: boolean = false;
+  @State subtitleWeight: number = 400;
+  /** 通知栏/锁屏显示字幕（需要通知权限，默认关） */
+  @State showNotification: boolean = false;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -139,6 +188,13 @@ struct Index {
 
   aboutToAppear(): void {
     this.registerBundledFonts();
+
+    // 主题：预设 → 用户自定义过的配色优先
+    const themeContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.themeIndex = ThemeStore.load(themeContext);
+    this.theme = THEME_PRESETS[this.themeIndex].colors;
+    this.loadCustomTheme();
+
     this.loadSettings();
     this.loadFavorites();
 
@@ -157,6 +213,128 @@ struct Index {
     });
   }
 
+  // ==================== 自定义调色 ====================
+
+  /** 取某个槽位当前的颜色 */
+  private slotColor(slot: string): string {
+    if (slot === 'subtitle') {
+      return this.subtitleColor;
+    }
+    if (slot === 'outline') {
+      return this.subtitleOutlineColor;
+    }
+    if (slot === 'bg') {
+      return this.theme.pageBackground;
+    }
+    if (slot === 'accent') {
+      return this.theme.accent;
+    }
+    if (slot === 'gold') {
+      return this.theme.gold;
+    }
+    return this.theme.textPrimary;
+  }
+
+  /** 展开/收起某个槽位的调色滑杆 */
+  private toggleSlot(slot: string): void {
+    if (this.editingSlot === slot) {
+      this.editingSlot = '';
+      return;
+    }
+    const hsl = ColorUtil.hexToHsl(this.slotColor(slot));
+    this.editH = hsl.h;
+    this.editS = hsl.s;
+    this.editL = hsl.l;
+    this.editingSlot = slot;
+  }
+
+  /** 滑杆变化：写回颜色并持久化 */
+  private applySlotColor(): void {
+    const hex = ColorUtil.hslToHex(this.editH, this.editS, this.editL);
+    const slot = this.editingSlot;
+
+    if (slot === 'subtitle') {
+      this.subtitleColor = hex;
+    } else if (slot === 'outline') {
+      this.subtitleOutlineColor = hex;
+    } else if (slot === 'bg') {
+      this.theme.pageBackground = hex;
+      this.theme.panelBackground = ColorUtil.hslToHex(this.editH, this.editS, Math.min(100, this.editL + 5));
+      this.persistTheme();
+    } else if (slot === 'accent') {
+      this.theme.accent = hex;
+      this.persistTheme();
+    } else if (slot === 'gold') {
+      this.theme.gold = hex;
+      this.persistTheme();
+    } else if (slot === 'text') {
+      this.theme.textPrimary = hex;
+      this.theme.textSecondary = ColorUtil.hslToHex(this.editH, Math.max(0, this.editS - 10), Math.min(100, this.editL - 20));
+      this.persistTheme();
+    }
+
+    this.saveSettings();
+  }
+
+  /** 把当前主题（可能是自定义过的）存下来 */
+  private persistTheme(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      const custom = new CustomTheme();
+      custom.pageBackground = this.theme.pageBackground;
+      custom.panelBackground = this.theme.panelBackground;
+      custom.textPrimary = this.theme.textPrimary;
+      custom.textSecondary = this.theme.textSecondary;
+      custom.accent = this.theme.accent;
+      custom.gold = this.theme.gold;
+      custom.borderSoft = this.theme.borderSoft;
+      store.putSync('custom_theme', JSON.stringify(custom));
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'persist theme failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  /** 读回自定义主题（没有就用预设） */
+  private loadCustomTheme(): boolean {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      const raw = store.getSync('custom_theme', '') as string;
+      if (raw.length === 0) {
+        return false;
+      }
+      const parsed = JSON.parse(raw) as CustomTheme;
+      if (parsed === null) {
+        return false;
+      }
+      this.theme = new ThemeColors(
+        parsed.pageBackground, parsed.panelBackground, parsed.textPrimary,
+        parsed.textSecondary, parsed.accent, parsed.gold, parsed.borderSoft
+      );
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /** 字重档位的中文名 */
+  private weightLabel(weight: number): string {
+    if (weight <= 300) {
+      return '细';
+    }
+    if (weight <= 400) {
+      return '常规';
+    }
+    if (weight <= 500) {
+      return '中';
+    }
+    if (weight <= 700) {
+      return '粗';
+    }
+    return '特粗';
+  }
   // ==================== 设置持久化 ====================
 
   private loadSettings(): void {
@@ -168,6 +346,8 @@ struct Index {
       this.fontFamilyValue = store.getSync('fontFamily', 'HarmonyOS Sans SC') as string;
       this.subtitleColor = store.getSync('subtitleColor', '#FFFFFF') as string;
       this.subtitleBold = store.getSync('subtitleBold', false) as boolean;
+      this.subtitleWeight = store.getSync('subtitleWeight', 400) as number;
+      this.showNotification = store.getSync('showNotification', false) as boolean;
       this.showSecondary = store.getSync('showSecondary', true) as boolean;
       this.autoNext = store.getSync('autoNext', true) as boolean;
       this.volume = store.getSync('volume', 1) as number;
@@ -192,6 +372,8 @@ struct Index {
       store.putSync('fontFamily', this.fontFamilyValue);
       store.putSync('subtitleColor', this.subtitleColor);
       store.putSync('subtitleBold', this.subtitleBold);
+      store.putSync('subtitleWeight', this.subtitleWeight);
+      store.putSync('showNotification', this.showNotification);
       store.putSync('showSecondary', this.showSecondary);
       store.putSync('autoNext', this.autoNext);
       store.putSync('volume', this.volume);
@@ -1286,6 +1468,7 @@ struct Index {
         .lineHeight(this.fontSize * 1.5)
         .textAlign(TextAlign.Center)
         .fontColor(this.currentText.length > 0 ? this.subtitleColor : this.theme.textSecondary)
+        .fontWeight(this.subtitleWeight)
         // 描边：ArkUI 没有文字描边，用同色的零偏移阴影模拟（对应桌面版的 OutlineThickness）
         .textShadow({
           radius: this.subtitleOutlineWidth,
@@ -1619,6 +1802,94 @@ struct Index {
         }
         .width('100%')
 
+        Blank().height(6)
+
+        // 自定义配色：四个色位点开就是 H/S/L 滑杆（对应桌面版的主题取色器）
+        Text('自定义配色（点色块调）')
+          .fontSize(12)
+          .fontColor(this.theme.textSecondary)
+          .margin({ top: 4, bottom: 6 })
+
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(THEME_SLOTS, (slot: ThemeSlot) => {
+            Row() {
+              Row()
+                .width(18)
+                .height(18)
+                .borderRadius(9)
+                .backgroundColor(this.slotColor(slot.key))
+                .border({ width: 1, color: this.theme.borderSoft })
+              Text(slot.label)
+                .fontSize(11)
+                .fontColor(this.theme.textPrimary)
+                .margin({ left: 6 })
+            }
+            .padding({ left: 8, right: 10, top: 5, bottom: 5 })
+            .margin({ right: 8, bottom: 8 })
+            .borderRadius(8)
+            .backgroundColor(this.theme.panelBackground)
+            .border({
+              width: this.editingSlot === slot.key ? 2 : 1,
+              color: this.editingSlot === slot.key ? this.theme.gold : this.theme.borderSoft
+            })
+            .onClick(() => this.toggleSlot(slot.key))
+          }, (slot: ThemeSlot) => slot.key)
+        }
+        .width('100%')
+
+        if (this.editingSlot.length > 0) {
+          Column() {
+            Row() {
+              Text('色相')
+                .fontSize(11)
+                .width(36)
+                .fontColor(this.theme.textSecondary)
+              Slider({ value: this.editH, min: 0, max: 360, step: 1 })
+                .layoutWeight(1)
+                .selectedColor(this.theme.gold)
+                .onChange((value: number) => {
+                  this.editH = value;
+                  this.applySlotColor();
+                })
+            }
+            .width('100%')
+
+            Row() {
+              Text('饱和')
+                .fontSize(11)
+                .width(36)
+                .fontColor(this.theme.textSecondary)
+              Slider({ value: this.editS, min: 0, max: 100, step: 1 })
+                .layoutWeight(1)
+                .selectedColor(this.theme.gold)
+                .onChange((value: number) => {
+                  this.editS = value;
+                  this.applySlotColor();
+                })
+            }
+            .width('100%')
+
+            Row() {
+              Text('明度')
+                .fontSize(11)
+                .width(36)
+                .fontColor(this.theme.textSecondary)
+              Slider({ value: this.editL, min: 0, max: 100, step: 1 })
+                .layoutWeight(1)
+                .selectedColor(this.theme.gold)
+                .onChange((value: number) => {
+                  this.editL = value;
+                  this.applySlotColor();
+                })
+            }
+            .width('100%')
+          }
+          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .margin({ bottom: 8 })
+          .borderRadius(8)
+          .backgroundColor(this.theme.panelBackground)
+        }
+
         Blank().height(10)
 
         this.SectionTitle('字幕外观')
@@ -1923,6 +2194,9 @@ struct Index {
           this.startMediaSession();
           this.saveLastPlayed(chapter);
 
+          // 常驻通知（长时任务的必要配套 + 通知栏字幕）
+          this.setupNowPlayingNotification(chapter);
+
           // 实况窗/灵动胶囊：在其他应用之上显示当前字幕
           const liveBook = this.selectedBook;
           if (liveBook !== null) {
@@ -1931,16 +2205,25 @@ struct Index {
         } else if (state === 'playing') {
           this.isPlaying = true;
           this.startTicker();
+          // 申请音频播放长时任务，退到后台/锁屏不会被系统冻结
+          this.startBackgroundPlayback();
         } else if (state === 'paused') {
           this.isPlaying = false;
           this.stopTicker();
           this.saveProgress(false);
           this.syncMediaSession(true);
+          this.stopBackgroundPlayback();
         } else if (state === 'completed') {
           this.isPlaying = false;
           this.stopTicker();
+          this.stopBackgroundPlayback();
           this.onChapterCompleted();
         }
+      });
+
+      // 原生进度事件：后台也有效（JS 定时器在后台会被冻结）
+      player.on('timeUpdate', (time: number) => {
+        this.onPlaybackTick(time);
       });
 
       player.on('error', (error: BusinessError) => {
@@ -2392,14 +2675,61 @@ struct Index {
         return;
       }
 
-      this.positionMs = player.currentTime;
-      this.synchronizer.update(player.currentTime);
-      this.secondarySynchronizer.update(player.currentTime);
-      this.applyCurrentLine();
-      this.saveProgress(false);
-      this.syncMediaSession(false);
-      this.syncLiveSubtitle();
-    }, 100);
+      this.onPlaybackTick(player.currentTime);
+    }, 200);
+  }
+
+  /**
+   * 统一的"播放进度刷新"。
+   *
+   * 前台由 200ms 定时器驱动，后台由播放器原生 timeUpdate 驱动 ——
+   * App 退后台时 JS 定时器会被冻结，但原生事件还会来，
+   * 播放状态/字幕才能继续更新（否则系统判定没在播、收回长时任务）。
+   */
+  private onPlaybackTick(currentMs: number): void {
+    if (currentMs < 0) {
+      return;
+    }
+
+    this.positionMs = currentMs;
+    this.synchronizer.update(currentMs);
+    this.secondarySynchronizer.update(currentMs);
+    this.applyCurrentLine();
+    this.saveProgress(false);
+    this.syncMediaSession(false);
+    this.syncLiveSubtitle();
+    this.syncNowPlaying();
+    this.updateEmbeddedIndex();
+  }
+
+  /** 申请通知权限并发第一条通知（长时任务的必要配套 + 通知栏字幕） */
+  private async setupNowPlayingNotification(chapter: Chapter): Promise<void> {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const ok = await this.nowPlaying.ensurePermission(context);
+    if (!ok) {
+      hilog.warn(0x0000, Index.TAG, 'notification not enabled, background may be killed');
+      return;
+    }
+
+    const book = this.selectedBook;
+    await this.nowPlaying.update(
+      context,
+      book === null ? 'KATARU' : book.title,
+      chapter.title,
+      this.currentText,
+      this.isPlaying
+    );
+  }
+
+  /** 字幕变化时更新通知栏文字 */
+  private syncNowPlaying(): void {
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (book === null || chapter === null) {
+      return;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.nowPlaying.update(context, book.title, chapter.title, this.currentText, this.isPlaying);
   }
 
   /** 字幕变了就更新实况窗胶囊（全在别的 App 上也能看到这句） */
@@ -2526,6 +2856,74 @@ struct Index {
     this.theme = THEME_PRESETS[0].colors;
     this.saveSettings();
     this.statusText = '已恢复默认设置';
+  }
+
+  // ==================== 后台播放（长时任务） ====================
+
+  /**
+   * 申请"音频播放"长时任务：不申请的话 App 退到后台会被系统冻结，
+   * 声音会停（日志里是 FROZEN_AFTER_ENTER_BG）。需要 KEEP_BACKGROUND_RUNNING 权限。
+   */
+  private async startBackgroundPlayback(): Promise<void> {
+    if (this.backgroundTaskActive) {
+      return;
+    }
+
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+
+      if (this.backgroundWantAgent === null) {
+        const wants: Want[] = [{
+          bundleName: context.abilityInfo.bundleName,
+          abilityName: context.abilityInfo.name,
+        }];
+        const info: wantAgent.WantAgentInfo = {
+          wants: wants,
+          actionType: wantAgent.OperationType.START_ABILITY,
+          requestCode: 100,
+          actionFlags: [wantAgent.WantAgentFlags.UPDATE_PRESENT_FLAG]
+        };
+        this.backgroundWantAgent = await wantAgent.getWantAgent(info);
+      }
+
+      // 依次尝试几种写法：不同 ROM 接受的参数形式不一样，把失败原因都打出来，成功即停
+      const submodeCandidates: number[] = [
+        backgroundTaskManager.BackgroundTaskSubmode.SUBMODE_NORMAL_NOTIFICATION,
+        backgroundTaskManager.BackgroundTaskSubmode.SUBMODE_AUDIO_PLAYBACK_NORMAL_NOTIFICATION,
+      ];
+
+      for (const submode of submodeCandidates) {
+        try {
+          const request = new backgroundTaskManager.ContinuousTaskRequest();
+          request.backgroundTaskModes = [backgroundTaskManager.BackgroundTaskMode.MODE_AUDIO_PLAYBACK];
+          request.backgroundTaskSubmodes = [submode];
+          request.wantAgent = this.backgroundWantAgent;
+          await backgroundTaskManager.startBackgroundRunning(context, request);
+          this.backgroundTaskActive = true;
+          hilog.info(0x0000, Index.TAG, 'background task started (submode=%{public}d)', submode);
+          return;
+        } catch (error) {
+          hilog.warn(0x0000, Index.TAG, 'background submode=%{public}d failed: %{public}s',
+            submode, JSON.stringify(error));
+        }
+      }
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'startBackgroundRunning failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  private async stopBackgroundPlayback(): Promise<void> {
+    if (!this.backgroundTaskActive) {
+      return;
+    }
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      await backgroundTaskManager.stopBackgroundRunning(context);
+      this.backgroundTaskActive = false;
+      hilog.info(0x0000, Index.TAG, 'background task stopped');
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'stopBackgroundRunning failed: %{public}s', JSON.stringify(error));
+    }
   }
 
   // ==================== 系统播控（后台播放 / 锁屏字幕） ====================
