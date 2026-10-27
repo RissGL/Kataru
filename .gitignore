@@ -54,3 +54,6 @@ desktop.ini
 
 # 翻译工作区（含小说原文，不适合公开）
 zh-work/
+# 调试截图
+/*.jpeg
+/*.png
