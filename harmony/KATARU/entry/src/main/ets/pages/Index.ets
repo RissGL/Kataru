@@ -9,6 +9,7 @@ import { image } from '@kit.ImageKit';
 import { Book, Chapter, LibraryScanner } from '../model/Library';
 import { BookStore } from '../model/BookStore';
 import { MediaSession } from '../model/MediaSession';
+import { LiveSubtitle } from '../model/LiveSubtitle';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
 import { SubtitleSynchronizer } from '../model/SubtitleSynchronizer';
 import { Timecode } from '../model/Timecode';
@@ -72,7 +73,10 @@ struct Index {
   private tickTimer: number = -1;
   private readingScroller: Scroller = new Scroller();
   private lastProgressSaveMs: number = 0;
+  private currentAudioFile: fileIo.File | null = null;
   private mediaSession: MediaSession = new MediaSession();
+  private liveSubtitle: LiveSubtitle = new LiveSubtitle();
+  @State liveViewAvailable: boolean = false;
 
   // ---------- 媒体库 ----------
   @State books: Book[] = [];
@@ -108,32 +112,105 @@ struct Index {
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
+    new FontChoice('思源宋体', 'KataruSerif'),
     new FontChoice('衬线', 'serif'),
     new FontChoice('等宽', 'monospace'),
   ];
 
   aboutToAppear(): void {
-    // 优先用"用户选过的书库文件夹"（授权需要每次启动重新激活一次），
-    // 没有就回落到 App 沙箱（导入的书放这里）。
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const sandboxRoot = context.filesDir + '/books';
+    this.registerBundledFonts();
+    this.loadSettings();
 
-    try {
-      fileIo.mkdirSync(sandboxRoot, true);
-    } catch (error) {
-      // 已存在会报错，忽略
-    }
-
+    // 书库只认"用户选过的文件夹"，不再往沙箱复制。
+    // 授权会在重装 App 后失效，那时提示用户重新选一次。
     const saved = this.loadSavedRoot();
     if (saved.length > 0) {
       this.libraryRoot = saved;
-      // 重新激活持久授权（不调用的话重启后权限可能失效）
+      // 重新激活持久授权（不调用的话重启后权限会失效）
       this.reactivate(saved);
+      this.refreshLibrary();
     } else {
-      this.libraryRoot = sandboxRoot;
+      this.libraryRoot = '';
+      this.books = [];
+      this.covers = [];
+      this.statusText = '还没有选书库文件夹 —— 到设置页点「选择书库文件夹」，选到放书的那一层';
+      hilog.info(0x0000, Index.TAG, 'no library folder yet');
     }
 
-    this.refreshLibrary();
+    // 探测实况窗（灵动胶囊）能力：没审批通过会返回 false
+    this.liveSubtitle.isEnabled().then((ok: boolean) => {
+      this.liveViewAvailable = ok;
+    });
+  }
+
+  // ==================== 设置持久化 ====================
+
+  private loadSettings(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+
+      this.fontSize = store.getSync('fontSize', 26) as number;
+      this.fontFamilyValue = store.getSync('fontFamily', 'HarmonyOS Sans SC') as string;
+      this.subtitleColor = store.getSync('subtitleColor', '#FFFFFF') as string;
+      this.subtitleBold = store.getSync('subtitleBold', false) as boolean;
+      this.showSecondary = store.getSync('showSecondary', true) as boolean;
+      this.autoNext = store.getSync('autoNext', true) as boolean;
+      this.volume = store.getSync('volume', 1) as number;
+      hilog.info(0x0000, Index.TAG, 'settings loaded: fontSize=%{public}d font=%{public}s',
+        this.fontSize, this.fontFamilyValue);
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'load settings failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  private saveSettings(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync('fontSize', this.fontSize);
+      store.putSync('fontFamily', this.fontFamilyValue);
+      store.putSync('subtitleColor', this.subtitleColor);
+      store.putSync('subtitleBold', this.subtitleBold);
+      store.putSync('showSecondary', this.showSecondary);
+      store.putSync('autoNext', this.autoNext);
+      store.putSync('volume', this.volume);
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'save settings failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  /**
+   * 注册内置字体：思源宋体 Source Han Serif SC。
+   *
+   * 文件在 resources/rawfile/fonts/ 下。注册成 fontFamily 之后，
+   * Text(...).fontFamily('KataruSerif') 就能用；加粗用单独的 Bold 字族
+   * （自定义字体没有字重变体，靠 fontWeight 不会变粗）。
+   */
+  private registerBundledFonts(): void {
+    try {
+      const fontManager = this.getUIContext().getFont();
+      fontManager.registerFont({
+        familyName: 'KataruSerif',
+        familySrc: $rawfile('fonts/SourceHanSerifSC-Regular.otf')
+      });
+      fontManager.registerFont({
+        familyName: 'KataruSerifBold',
+        familySrc: $rawfile('fonts/SourceHanSerifSC-Bold.otf')
+      });
+      hilog.info(0x0000, Index.TAG, 'bundled fonts registered (Source Han Serif SC)');
+    } catch (error) {
+      hilog.error(0x0000, Index.TAG, 'registerFont failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  /** 按当前设置挑字族：思源宋体 + 加粗时用内置 Bold 字族 */
+  private subtitleFamily(): string {
+    if (this.subtitleBold && this.fontFamilyValue === 'KataruSerif') {
+      return 'KataruSerifBold';
+    }
+    return this.fontFamilyValue;
   }
 
   /**
@@ -150,7 +227,7 @@ struct Index {
 
     this.statusText = books.length > 0
       ? ('书库：' + books.length + ' 本')
-      : '点「选择书库文件夹」或「添加书本」';
+      : '还没选书库文件夹 —— 去设置页点「选择书库文件夹」';
     hilog.info(0x0000, Index.TAG, 'refresh: %{public}d book(s) at %{public}s',
       books.length, this.libraryRoot);
   }
@@ -471,287 +548,8 @@ struct Index {
 
       // 只有真的"能力不存在"才降级；用户取消不会走到这里
       this.statusText = '选文件夹失败（' + err.message + '），已切换成多选文件';
-      await this.importBook();
+      this.statusText = '选文件夹失败：' + err.message;
     }
-  }
-
-  /**
-   * 导入一本（或几本）书：一次多选【音频 + 字幕 + 封面】。
-   *
-   * 这是鸿蒙上唯一稳的路子：用系统选择器授权具体文件，App 记住 URI，
-   * 之后直接按 URI 播放/读字幕，不需要任何目录权限。
-   */
-  private async importBook(): Promise<void> {
-    try {
-      const options = new picker.DocumentSelectOptions();
-      options.maxSelectNumber = 0; // 不限个数
-      options.fileSuffixFilters = ['音频|.mp3,.m4a,.m4b,.aac,.wav,.flac,.ogg,.mp4',
-        '字幕|.srt', '封面|.png,.jpg,.jpeg,.webp'];
-
-      const documentPicker = new picker.DocumentViewPicker(this.getUIContext().getHostContext() as common.UIAbilityContext);
-      const uris: string[] = await documentPicker.select(options);
-      if (uris === null || uris.length === 0) {
-        return;
-      }
-
-      hilog.info(0x0000, Index.TAG, 'import: picked %{public}d file(s)', uris.length);
-
-      // 持久化授权（否则重启就失效）
-      const policies: fileShare.PolicyInfo[] = [];
-      for (const uri of uris) {
-        const policy: fileShare.PolicyInfo = {
-          uri: uri,
-          operationMode: (fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE),
-        };
-        policies.push(policy);
-      }
-      try {
-        await fileShare.persistPermission(policies);
-        hilog.info(0x0000, Index.TAG, 'import: persisted %{public}d permission(s)', policies.length);
-      } catch (error) {
-        hilog.warn(0x0000, Index.TAG, 'import: persist failed %{public}s', JSON.stringify(error));
-      }
-
-      // 关键：把文件**复制进应用沙箱**。
-      // 不复制的话，重启后 persistPermission 的授权会失效（实测 code 13900001），
-      // 音频和字幕全都打不开。复制到沙箱后就不需要任何权限了。
-      const copied = this.copyToSandbox(uris);
-      if (copied === 0) {
-        this.statusText = '复制文件失败，看看日志';
-        return;
-      }
-
-      const context0 = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const sandboxRoot = context0.filesDir + '/books';
-
-      // 导入完成后把书库根切到沙箱（复制的书都在这），整表重建
-      this.libraryRoot = sandboxRoot;
-      this.refreshLibrary();
-      this.currentTab = 0; // 导入完自动跳到书库，立刻看到结果
-
-      let chapters = 0;
-      let subs = 0;
-      for (const book of this.books) {
-        chapters += book.chapters.length;
-        for (const chapter of book.chapters) {
-          if (chapter.hasSubtitle) {
-            subs++;
-          }
-        }
-      }
-      this.statusText = `书库：${this.books.length} 本 / ${chapters} 章（${subs} 章有字幕）`;
-
-      for (const book of this.books) {
-        hilog.info(0x0000, Index.TAG, '  book: %{public}s chapters=%{public}d cover=%{public}s',
-          book.title, book.chapters.length, book.coverPath.length > 0 ? 'yes' : 'no');
-      }
-    } catch (error) {
-      const err = error as BusinessError;
-      this.statusText = `导入失败：${err.message}`;
-      hilog.error(0x0000, Index.TAG, 'import failed: %{public}s', JSON.stringify(err));
-    }
-  }
-
-  /**
-   * 把选中的文件复制进沙箱：filesDir/books/<书名>/<文件名>
-   * 返回复制成功的文件数。
-   */
-  private copyToSandbox(uris: string[]): number {
-    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    const root = `${context.filesDir}/books`;
-
-    // 书名取第一个音频的文件名
-    let bookName = '';
-    for (const uri of uris) {
-      const ext = BookStore.extFromUri(uri);
-      if (ext !== '.srt' && ext !== '.png' && ext !== '.jpg' && ext !== '.jpeg' && ext !== '.webp') {
-        bookName = BookStore.titleFromUri(uri);
-        break;
-      }
-    }
-
-    if (bookName.length === 0) {
-      bookName = 'book';
-    }
-
-    // 名字里的 / 和 \ 要清掉
-    const safeName = bookName.replace(/[\/\\:*?"<>|]/g, '_');
-    const bookDir = `${root}/${safeName}`;
-
-    try {
-      fileIo.mkdirSync(bookDir, true);
-    } catch (error) {
-      hilog.warn(0x0000, Index.TAG, 'mkdir sandbox failed: %{public}s', JSON.stringify(error));
-    }
-
-    let copied = 0;
-    for (const uri of uris) {
-      const fileName = BookStore.fileFromUri(uri);
-      let safeFileName = fileName.replace(/[\/\\:*?"<>|]/g, '_');
-
-      // 关键：AVPlayer 按扩展名认格式，.m4b 它不认（日志实测 code 5400106 不支持格式），
-      // 而 m4b 内容就是 MP4/AAC —— 落盘时直接存成 .m4a，播放器才认得。
-      // （桌面版用同样的思路：给 .m4b 建一个 .m4a 的硬链接别名）
-      if (safeFileName.toLowerCase().endsWith('.m4b')) {
-        safeFileName = safeFileName.substring(0, safeFileName.length - 4) + '.m4a';
-      }
-
-      const target = `${bookDir}/${safeFileName}`;
-
-      try {
-        // 源文件大小
-        const src = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
-        let srcSize = 0;
-        try {
-          srcSize = fileIo.statSync(src.fd).size;
-        } catch (error) {
-          hilog.error(0x0000, Index.TAG, 'stat source failed: %{public}s', JSON.stringify(error));
-        }
-
-        // 已经复制过、且大小对得上就跳过；大小不对（比如上次失败留下空文件）就重拷
-        if (fileIo.accessSync(target)) {
-          let existing = 0;
-          try {
-            existing = fileIo.statSync(target).size;
-          } catch (error) {
-            existing = -1;
-          }
-
-          if (existing === srcSize && srcSize > 0) {
-            hilog.info(0x0000, Index.TAG, 'copy skip (same size %{public}d): %{public}s',
-              srcSize, safeFileName);
-            copied++;
-            fileIo.closeSync(src);
-            continue;
-          }
-
-          hilog.warn(0x0000, Index.TAG, 'copy redo (existing=%{public}d src=%{public}d): %{public}s',
-            existing, srcSize, safeFileName);
-          try {
-            fileIo.unlinkSync(target);
-          } catch (error) {
-            // 删不掉就覆盖写
-          }
-        }
-
-        // 分块复制。
-        // 不能用 fileIo.copyFile(fd, path)：实测它会"成功"但写出 0 字节的空文件，
-        // 于是音频打不开(5400106)、字幕 0 行、封面解码失败。这里自己读+写并校验字节数。
-        const written = this.copyFdToFile(src.fd, srcSize, target);
-        hilog.info(0x0000, Index.TAG, 'copied: %{public}s (%{public}d/%{public}d bytes)',
-          safeFileName, written, srcSize);
-
-        if (written === srcSize && srcSize > 0) {
-          copied++;
-        } else {
-          hilog.error(0x0000, Index.TAG, 'copy INCOMPLETE: %{public}s', safeFileName);
-        }
-
-        fileIo.closeSync(src);
-      } catch (error) {
-        hilog.error(0x0000, Index.TAG, 'copy failed: %{public}s %{public}s',
-          safeFileName, JSON.stringify(error));
-      }
-    }
-
-    hilog.info(0x0000, Index.TAG, 'sandbox copy done: %{public}d/%{public}d files -> %{public}s',
-      copied, uris.length, bookDir);
-
-    return copied;
-  }
-
-  /** 从 fd 分块读到目标文件，返回写入字节数 */
-  private copyFdToFile(srcFd: number, srcSize: number, target: string): number {
-    const chunk = 4 * 1024 * 1024;
-    const buffer = new ArrayBuffer(chunk);
-
-    const dst = fileIo.openSync(target,
-      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-
-    let written = 0;
-    try {
-      let readOffset = 0;
-      while (readOffset < srcSize) {
-        const want = Math.min(chunk, srcSize - readOffset);
-        const read = fileIo.readSync(srcFd, buffer, { offset: readOffset, length: want });
-        if (read <= 0) {
-          break;
-        }
-
-        const wrote = fileIo.writeSync(dst.fd, buffer, { offset: written, length: read });
-        written += wrote;
-        readOffset += read;
-      }
-    } finally {
-      fileIo.closeSync(dst);
-    }
-
-    return written;
-  }
-
-  /**
-   * 把选中的一堆 URI 组装成 Book：
-   *  - 音频 → 章节（标题取文件名）
-   *  - .srt → 按文件名配给对应章节（同名 / 同名+语言后缀）
-   *  - 图片 → 封面
-   */
-  private buildBooksFromUris(uris: string[]): Book[] {
-    const audioUris: string[] = [];
-    const subtitleUris: string[] = [];
-    const coverUris: string[] = [];
-
-    for (const uri of uris) {
-      const ext = BookStore.extFromUri(uri);
-      if (ext === '.srt') {
-        subtitleUris.push(uri);
-      } else if (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp') {
-        coverUris.push(uri);
-      } else {
-        audioUris.push(uri);
-      }
-    }
-
-    if (audioUris.length === 0) {
-      return [];
-    }
-
-    // 这次导入当成一本书：书名取第一个音频的文件名
-    const title = BookStore.titleFromUri(audioUris[0]);
-    const book = new Book('', title);
-
-    for (const audio of audioUris) {
-      const chapterTitle = BookStore.titleFromUri(audio);
-      const chapter = new Chapter(audio, chapterTitle);
-
-      // 配对字幕：同名优先，其次同名 + 语言后缀
-      let exact = '';
-      const related: string[] = [];
-      for (const subtitle of subtitleUris) {
-        const subStem = BookStore.titleFromUri(subtitle);
-        if (subStem.toLowerCase() === chapterTitle.toLowerCase()) {
-          exact = subtitle;
-        } else if (subStem.toLowerCase().startsWith(chapterTitle.toLowerCase())) {
-          related.push(subtitle);
-        }
-      }
-
-      chapter.subtitlePath = exact.length > 0 ? exact : (related.length > 0 ? related[0] : '');
-      book.chapters.push(chapter);
-    }
-
-    if (coverUris.length > 0) {
-      // 优先和书名同名的图片
-      let chosen = coverUris[0];
-      for (const cover of coverUris) {
-        if (BookStore.titleFromUri(cover).toLowerCase() === title.toLowerCase()) {
-          chosen = cover;
-          break;
-        }
-      }
-      book.coverPath = chosen;
-    }
-
-    return [book];
   }
 
   /** 退到后台时保存进度（切走 App 也不会丢位置） */
@@ -763,6 +561,7 @@ struct Index {
     this.saveProgress(true);
     this.stopTicker();
     this.mediaSession.stop();
+    this.liveSubtitle.stop(this.selectedChapter === null ? '' : this.selectedChapter.title);
     this.releasePlayer();
   }
 
@@ -778,12 +577,6 @@ struct Index {
         Blank()
 
         if (this.currentTab === 0) {
-          Button('添加书本')
-            .fontSize(13)
-            .height(32)
-            .backgroundColor($r('app.color.panel_background'))
-            .fontColor($r('app.color.gold'))
-            .onClick(() => this.importBook())
         }
 
         if (this.currentTab === 2 && this.lines.length > 0) {
@@ -856,11 +649,6 @@ struct Index {
             .fontColor($r('app.color.text_secondary'))
             .margin({ top: 12, left: 24, right: 24 })
 
-          Button('添加书本')
-            .margin({ top: 20 })
-            .backgroundColor($r('app.color.accent'))
-            .fontColor(Color.White)
-            .onClick(() => this.importBook())
 
           Text('一次多选这本的：音频 (.m4b/.mp3) + 字幕 (.srt) + 封面 (png)')
             .fontSize(11)
@@ -980,7 +768,6 @@ struct Index {
         .fontSize(this.fontSize)
         .lineHeight(this.fontSize * 1.5)
         .textAlign(TextAlign.Center)
-        .fontWeight(this.subtitleBold ? FontWeight.Bold : FontWeight.Normal)
         .fontColor(this.currentText.length > 0 ? this.subtitleColor : $r('app.color.text_secondary'))
         .maxLines(4)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1045,6 +832,7 @@ struct Index {
           .selectedColor($r('app.color.gold'))
           .onChange((value: number) => {
             this.volume = value / 100;
+            this.saveSettings();
             if (this.player !== null) {
               this.player.setVolume(this.volume);
             }
@@ -1216,13 +1004,6 @@ struct Index {
           .fontColor(Color.White)
           .onClick(() => this.chooseLibraryFolder())
 
-        Button('添加书本')
-          .width('100%')
-          .height(40)
-          .margin({ top: 8, bottom: 6 })
-          .backgroundColor($r('app.color.accent'))
-          .fontColor(Color.White)
-          .onClick(() => this.importBook())
 
         Button('重新扫描')
           .width('100%')
@@ -1259,6 +1040,7 @@ struct Index {
           .selectedColor($r('app.color.accent'))
           .onChange((value: number) => {
             this.fontSize = value;
+            this.saveSettings();
           })
 
         Text('字体')
@@ -1276,6 +1058,7 @@ struct Index {
               .fontColor(this.fontFamilyValue === choice.value ? Color.White : $r('app.color.text_primary'))
               .onClick(() => {
                 this.fontFamilyValue = choice.value;
+                this.saveSettings();
               })
           }, (choice: FontChoice) => choice.value)
         }
@@ -1301,6 +1084,7 @@ struct Index {
               })
               .onClick(() => {
                 this.subtitleColor = item.value;
+                this.saveSettings();
               })
           }, (item: ColorChoice) => item.value)
         }
@@ -1315,6 +1099,7 @@ struct Index {
             .selectedColor($r('app.color.accent'))
             .onChange((isOn: boolean) => {
               this.subtitleBold = isOn;
+              this.saveSettings();
             })
         }
         .width('100%')
@@ -1332,6 +1117,7 @@ struct Index {
             .selectedColor($r('app.color.accent'))
             .onChange((isOn: boolean) => {
               this.showSecondary = isOn;
+              this.saveSettings();
             })
         }
         .width('100%')
@@ -1346,6 +1132,7 @@ struct Index {
             .selectedColor($r('app.color.accent'))
             .onChange((isOn: boolean) => {
               this.autoNext = isOn;
+              this.saveSettings();
             })
         }
         .width('100%')
@@ -1462,11 +1249,41 @@ struct Index {
         hilog.error(0x0000, Index.TAG, 'player error: %{public}s', JSON.stringify(error));
       });
 
+      // 用数据源回调播放，而不是 fdSrc。
+      //
+      // 原因：AVPlayer 会按**扩展名**判断格式，.m4b 直接被拒（实测 5400106 不支持格式），
+      // 而 m4b 内容就是 MP4/AAC。走 AVDataSrcDescriptor 直接喂字节流，它就按内容解析，
+      // 既不用改用户文件的名字，也不用复制一份。
       const file = fileIo.openSync(chapter.audioPath, fileIo.OpenMode.READ_ONLY);
       const stat = fileIo.statSync(file.fd);
+      this.currentAudioFile = file;
       hilog.info(0x0000, Index.TAG, 'open audio: %{public}s (%{public}d bytes)',
         chapter.audioPath, stat.size);
-      player.fdSrc = { fd: file.fd, offset: 0, length: stat.size };
+
+      const fd = file.fd;
+      const dataSrc: media.AVDataSrcDescriptor = {
+        fileSize: stat.size,
+        callback: (buffer: ArrayBuffer, length: number, pos?: number): number => {
+          const offset = pos === undefined ? 0 : pos;
+          try {
+            return fileIo.readSync(fd, buffer, { offset: offset, length: length });
+          } catch (readError) {
+            hilog.error(0x0000, Index.TAG, 'read audio failed: %{public}s',
+              JSON.stringify(readError));
+            return -2;
+          }
+        }
+      };
+
+      const mediaSource = media.createMediaSourceWithDataSource(dataSrc);
+      if (mediaSource === undefined) {
+        this.statusText = '无法创建音频数据源';
+        hilog.error(0x0000, Index.TAG, 'createMediaSourceWithDataSource returned undefined');
+        return;
+      }
+
+      hilog.info(0x0000, Index.TAG, 'setMediaSource(dataSrc) for %{public}s', chapter.title);
+      await player.setMediaSource(mediaSource);
     } catch (error) {
       const err = error as BusinessError;
       this.statusText = `打开音频失败：${err.message}`;
