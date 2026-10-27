@@ -14,6 +14,26 @@ import { Timecode } from '../model/Timecode';
 const PREFS_NAME: string = 'kataru_settings';
 const PREF_KEY_ROOT: string = 'library_uri';
 
+/** 一个字幕颜色选项 */
+class ColorChoice {
+  name: string = '';
+  value: string = '';
+
+  constructor(name: string, value: string) {
+    this.name = name;
+    this.value = value;
+  }
+}
+
+const SUB_COLORS: ColorChoice[] = [
+  new ColorChoice('白', '#FFFFFF'),
+  new ColorChoice('米白', '#F5EFE6'),
+  new ColorChoice('金', '#C9A227'),
+  new ColorChoice('暗红', '#A83B3B'),
+  new ColorChoice('浅蓝', '#8FB8DE'),
+  new ColorChoice('灰', '#B9B3A9'),
+];
+
 /** 一本书的封面（解码成 PixelMap，Image 才能画出来） */
 class CoverItem {
   path: string = '';
@@ -47,8 +67,10 @@ struct Index {
 
   private player: media.AVPlayer | null = null;
   private synchronizer: SubtitleSynchronizer = new SubtitleSynchronizer();
+  private secondarySynchronizer: SubtitleSynchronizer = new SubtitleSynchronizer();
   private tickTimer: number = -1;
   private readingScroller: Scroller = new Scroller();
+  private lastProgressSaveMs: number = 0;
 
   // ---------- 媒体库 ----------
   @State books: Book[] = [];
@@ -63,14 +85,24 @@ struct Index {
   @State positionMs: number = 0;
   @State durationMs: number = 0;
   @State currentText: string = '';
+  @State secondaryText: string = '';
+  @State currentTextTranslated: boolean = false;
   @State lines: SubtitleLine[] = [];
+  @State secondaryLines: SubtitleLine[] = [];
   @State currentIndex: number = -1;
   @State covers: CoverItem[] = [];
+
+  // ---------- 播放设置 ----------
+  @State volume: number = 1;
+  @State autoNext: boolean = true;
+  @State showSecondary: boolean = true;
 
   // ---------- 界面 ----------
   @State currentTab: number = 0;
   @State fontSize: number = 26;
   @State fontFamilyValue: string = 'HarmonyOS Sans SC';
+  @State subtitleColor: string = '#FFFFFF';
+  @State subtitleBold: boolean = false;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -843,13 +875,85 @@ struct Index {
         .fontSize(this.fontSize)
         .lineHeight(this.fontSize * 1.5)
         .textAlign(TextAlign.Center)
-        .fontColor(this.currentText.length > 0 ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+        .fontWeight(this.subtitleBold ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor(this.currentText.length > 0 ? this.subtitleColor : $r('app.color.text_secondary'))
         .maxLines(4)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .width('100%')
         .padding({ left: 20, right: 20, top: 16 })
 
+      // 双语：主字幕下面跟一行译文
+      if (this.showSecondary && this.secondaryText.length > 0) {
+        Text(this.secondaryText)
+          .fontFamily(this.fontFamilyValue)
+          .fontSize(this.fontSize * 0.68)
+          .lineHeight(this.fontSize * 1.05)
+          .textAlign(TextAlign.Center)
+          .fontColor($r('app.color.text_secondary'))
+          .maxLines(3)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .padding({ left: 24, right: 24, top: 4 })
+      }
+
+      // 章节切换（多章的书才显示）
+      if (this.selectedBook !== null && this.selectedBook.chapters.length > 1) {
+        Scroll() {
+          Row() {
+            ForEach(this.selectedBook.chapters, (chapter: Chapter, index: number) => {
+              Text(chapter.title)
+                .fontSize(12)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .constraintSize({ maxWidth: 160 })
+                .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+                .margin({ right: 8 })
+                .borderRadius(14)
+                .backgroundColor(this.selectedChapter !== null &&
+                  this.selectedChapter.audioPath === chapter.audioPath
+                  ? $r('app.color.accent') : $r('app.color.panel_background'))
+                .fontColor(this.selectedChapter !== null &&
+                  this.selectedChapter.audioPath === chapter.audioPath
+                  ? Color.White : $r('app.color.text_primary'))
+                .onClick(() => this.openChapter(chapter))
+            }, (chapter: Chapter) => chapter.audioPath)
+          }
+          .padding({ left: 16, right: 16 })
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .width('100%')
+        .margin({ top: 8 })
+      }
+
       Blank()
+
+      // 音量
+      Row() {
+        Text('🔈')
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+
+        Slider({ value: this.volume * 100, min: 0, max: 100, step: 1 })
+          .layoutWeight(1)
+          .margin({ left: 8, right: 8 })
+          .selectedColor($r('app.color.gold'))
+          .onChange((value: number) => {
+            this.volume = value / 100;
+            if (this.player !== null) {
+              this.player.setVolume(this.volume);
+            }
+          })
+
+        Text(Math.round(this.volume * 100) + '%')
+          .fontSize(11)
+          .width(38)
+          .textAlign(TextAlign.End)
+          .fontColor($r('app.color.text_secondary'))
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20 })
+      .margin({ bottom: 6 })
 
       Row() {
         Text(Timecode.formatShort(this.positionMs))
@@ -939,12 +1043,26 @@ struct Index {
                   .width(50)
                   .fontColor($r('app.color.text_secondary'))
 
-                Text(line.text)
-                  .fontSize(16)
-                  .lineHeight(24)
-                  .layoutWeight(1)
-                  .fontColor(index === this.currentIndex ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
-                  .fontWeight(index === this.currentIndex ? FontWeight.Medium : FontWeight.Normal)
+                Column() {
+                  Text(line.text)
+                    .fontSize(16)
+                    .lineHeight(24)
+                    .width('100%')
+                    .fontColor(index === this.currentIndex ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+                    .fontWeight(index === this.currentIndex ? FontWeight.Medium : FontWeight.Normal)
+
+                  // 双语：这一条对应的译文
+                  if (this.showSecondary && this.secondaryLines.length > 0) {
+                    Text(this.secondaryTextAt(line.startMs))
+                      .fontSize(13)
+                      .lineHeight(19)
+                      .width('100%')
+                      .fontColor($r('app.color.text_secondary'))
+                      .margin({ top: 2 })
+                  }
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
               }
               .width('100%')
               .alignItems(VerticalAlign.Top)
@@ -1058,6 +1176,76 @@ struct Index {
         }
         .width('100%')
 
+        // 字幕颜色（对应桌面版的配色/字幕颜色设置）
+        Text('颜色')
+          .fontSize(13)
+          .fontColor($r('app.color.text_primary'))
+          .margin({ top: 6, bottom: 6 })
+
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(SUB_COLORS, (item: ColorChoice) => {
+            Row()
+              .width(34)
+              .height(34)
+              .margin({ right: 10, bottom: 8 })
+              .borderRadius(17)
+              .backgroundColor(item.value)
+              .border({
+                width: this.subtitleColor === item.value ? 3 : 1,
+                color: this.subtitleColor === item.value ? $r('app.color.gold') : $r('app.color.border_soft')
+              })
+              .onClick(() => {
+                this.subtitleColor = item.value;
+              })
+          }, (item: ColorChoice) => item.value)
+        }
+        .width('100%')
+
+        Row() {
+          Text('加粗字幕')
+            .fontSize(13)
+            .fontColor($r('app.color.text_primary'))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.subtitleBold })
+            .selectedColor($r('app.color.accent'))
+            .onChange((isOn: boolean) => {
+              this.subtitleBold = isOn;
+            })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Blank().height(6)
+        this.SectionTitle('播放')
+
+        Row() {
+          Text('双语对照')
+            .fontSize(13)
+            .fontColor($r('app.color.text_primary'))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.showSecondary })
+            .selectedColor($r('app.color.accent'))
+            .onChange((isOn: boolean) => {
+              this.showSecondary = isOn;
+            })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Row() {
+          Text('播完自动下一章')
+            .fontSize(13)
+            .fontColor($r('app.color.text_primary'))
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.autoNext })
+            .selectedColor($r('app.color.accent'))
+            .onChange((isOn: boolean) => {
+              this.autoNext = isOn;
+            })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
         Blank().height(10)
 
         this.SectionTitle('状态')
@@ -1102,9 +1290,12 @@ struct Index {
   private async openChapter(chapter: Chapter): Promise<void> {
     this.selectedChapter = chapter;
     this.currentText = '';
+    this.secondaryText = '';
     this.currentIndex = -1;
     this.lines = [];
+    this.secondaryLines = [];
     this.synchronizer.clear();
+    this.secondarySynchronizer.clear();
     this.positionMs = 0;
     this.durationMs = 0;
     this.stopTicker();
@@ -1112,6 +1303,11 @@ struct Index {
     if (chapter.hasSubtitle) {
       this.loadSubtitle(chapter.subtitlePath);
     }
+    if (chapter.secondarySubtitlePath.length > 0) {
+      this.loadSecondarySubtitle(chapter.secondarySubtitlePath);
+    }
+
+    const resumeAt = this.loadProgress(chapter);
 
     try {
       await this.releasePlayer();
@@ -1125,13 +1321,28 @@ struct Index {
           player.prepare();
         } else if (state === 'prepared') {
           this.durationMs = player.duration;
-          this.statusText = `已就绪，时长 ${Timecode.formatShort(this.durationMs)}`;
+          hilog.info(0x0000, Index.TAG, 'prepared: duration=%{public}d resumeAt=%{public}d',
+            this.durationMs, resumeAt);
+          if (resumeAt > 0 && resumeAt < this.durationMs - 3000) {
+            player.seek(resumeAt, media.SeekMode.SEEK_CLOSEST);
+            this.positionMs = resumeAt;
+            this.synchronizer.seek(resumeAt);
+            this.applyCurrentLine();
+          }
+          player.setVolume(this.volume);
+          // 自动开始播放（点书即听，和桌面版一致）
+          player.play();
         } else if (state === 'playing') {
           this.isPlaying = true;
           this.startTicker();
-        } else if (state === 'paused' || state === 'completed') {
+        } else if (state === 'paused') {
           this.isPlaying = false;
           this.stopTicker();
+          this.saveProgress(false);
+        } else if (state === 'completed') {
+          this.isPlaying = false;
+          this.stopTicker();
+          this.onChapterCompleted();
         }
       });
 
@@ -1151,6 +1362,87 @@ struct Index {
       const err = error as BusinessError;
       this.statusText = `打开音频失败：${err.message}`;
       hilog.error(0x0000, Index.TAG, 'open failed: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  /** 一章播完：自动下一章（和桌面版一致） */
+  private onChapterCompleted(): void {
+    this.saveProgress(false);
+    if (!this.autoNext) {
+      hilog.info(0x0000, Index.TAG, 'completed, autoNext off');
+      return;
+    }
+
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (book === null || chapter === null) {
+      return;
+    }
+
+    const index = this.chapterIndexOf(chapter);
+    if (index < 0 || index + 1 >= book.chapters.length) {
+      hilog.info(0x0000, Index.TAG, 'completed, no next chapter');
+      return;
+    }
+
+    hilog.info(0x0000, Index.TAG, 'completed, auto open next chapter %{public}d', index + 1);
+    this.openChapter(book.chapters[index + 1]);
+  }
+
+  /** 当前章在书里的序号 */
+  private chapterIndexOf(chapter: Chapter): number {
+    const book = this.selectedBook;
+    if (book === null) {
+      return -1;
+    }
+    for (let i = 0; i < book.chapters.length; i++) {
+      if (book.chapters[i].audioPath === chapter.audioPath) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  // ==================== 进度记忆 ====================
+
+  private progressKey(chapter: Chapter): string {
+    return 'pos_' + chapter.audioPath;
+  }
+
+  /** 读上次听到的位置（毫秒） */
+  private loadProgress(chapter: Chapter): number {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      const value = store.getSync(this.progressKey(chapter), 0) as number;
+      hilog.info(0x0000, Index.TAG, 'load progress: %{public}d ms', value);
+      return value;
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'load progress failed: %{public}s', JSON.stringify(error));
+      return 0;
+    }
+  }
+
+  /** 存当前位置；force=false 时最多 5 秒存一次，避免刷盘太频繁 */
+  private saveProgress(force: boolean): void {
+    const chapter = this.selectedChapter;
+    if (chapter === null) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!force && now - this.lastProgressSaveMs < 5000) {
+      return;
+    }
+    this.lastProgressSaveMs = now;
+
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync(this.progressKey(chapter), this.positionMs);
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'save progress failed: %{public}s', JSON.stringify(error));
     }
   }
 
@@ -1217,6 +1509,16 @@ struct Index {
 
   // ==================== 逻辑：字幕 ====================
 
+  /** 找某条主字幕对应的译文（按时间区间重叠匹配） */
+  private secondaryTextAt(startMs: number): string {
+    for (const line of this.secondaryLines) {
+      if (startMs >= line.startMs - 300 && startMs <= line.endMs + 300) {
+        return line.text;
+      }
+    }
+    return '';
+  }
+
   /**
    * 用 fd 读字幕文本。
    *
@@ -1250,15 +1552,35 @@ struct Index {
       this.currentText = '';
 
       const name = path.substring(path.lastIndexOf('/') + 1);
-      this.statusText = `字幕：${name}（${lines.length} 条${warnings.length > 0 ? `，告警 ${warnings.length}` : ''}）`;
+      this.statusText = '字幕：' + name + '（' + lines.length + ' 条）';
+      hilog.info(0x0000, Index.TAG, 'subtitle loaded: %{public}s (%{public}d lines)',
+        name, lines.length);
 
       this.synchronizer.seek(this.positionMs);
       this.applyCurrentLine();
     } catch (error) {
       const err = error as BusinessError;
-      this.statusText = `读字幕失败：${err.message}（这个字幕可能没授权成功，重新导入一次试试）`;
+      this.statusText = '读字幕失败：' + err.message;
       hilog.error(0x0000, Index.TAG, 'load subtitle failed: uri=%{public}s %{public}s',
         path, JSON.stringify(err));
+    }
+  }
+
+  /** 读对照字幕（双语） */
+  private loadSecondarySubtitle(path: string): void {
+    try {
+      const content = this.readTextByUri(path);
+      const warnings: string[] = [];
+      const lines = SrtParser.parse(content, warnings);
+
+      this.secondarySynchronizer.load(lines);
+      this.secondaryLines = lines;
+      hilog.info(0x0000, Index.TAG, 'secondary subtitle loaded: %{public}d lines', lines.length);
+
+      this.secondarySynchronizer.seek(this.positionMs);
+      this.applyCurrentLine();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'load secondary subtitle failed: %{public}s', JSON.stringify(error));
     }
   }
 
@@ -1268,6 +1590,13 @@ struct Index {
 
     if (this.currentText !== text) {
       this.currentText = text;
+    }
+
+    // 双语：对照字幕按同一时间点匹配
+    const secondary = this.secondarySynchronizer.current;
+    const secondText = secondary === null ? '' : secondary.text;
+    if (this.secondaryText !== secondText) {
+      this.secondaryText = secondText;
     }
 
     const index = this.synchronizer.currentIndex;
@@ -1292,7 +1621,9 @@ struct Index {
 
       this.positionMs = player.currentTime;
       this.synchronizer.update(player.currentTime);
+      this.secondarySynchronizer.update(player.currentTime);
       this.applyCurrentLine();
+      this.saveProgress(false);
     }, 100);
   }
 

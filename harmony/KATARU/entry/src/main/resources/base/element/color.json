@@ -6,6 +6,7 @@
     { "name": "text_primary", "value": "#F1EBE1" },
     { "name": "text_secondary", "value": "#B5AFA6" },
     { "name": "accent", "value": "#9E2B25" },
-    { "name": "gold", "value": "#C9A227" }
+    { "name": "gold", "value": "#C9A227" },
+{ "name": "border_soft", "value": "#3A3330" }
   ]
 }
