@@ -740,11 +740,45 @@ struct Index {
       if (book.coverPath.length === 0) {
         continue;
       }
+
+      // 已在缓存里就复用，不重复解码（刷新/切页时省 CPU）
+      let cached: image.PixelMap | undefined = undefined;
+      for (const item of this.covers) {
+        if (item.path === book.coverPath) {
+          cached = item.pixel;
+          break;
+        }
+      }
+
+      if (cached !== undefined) {
+        list.push(new CoverItem(book.coverPath, cached));
+        continue;
+      }
+
       const pixel = await this.loadPixelMap(book.coverPath);
       if (pixel !== undefined) {
         list.push(new CoverItem(book.coverPath, pixel));
       }
     }
+
+    // 释放不再需要的封面（书被删掉或换了封面）
+    for (const old of this.covers) {
+      let keep = false;
+      for (const item of list) {
+        if (item.path === old.path) {
+          keep = true;
+          break;
+        }
+      }
+      if (!keep && old.pixel !== undefined) {
+        try {
+          await old.pixel.release();
+        } catch (error) {
+          // 忽略
+        }
+      }
+    }
+
     this.covers = list;
     hilog.info(0x0000, Index.TAG, 'covers: %{public}d/%{public}d loaded', list.length, this.books.length);
   }
