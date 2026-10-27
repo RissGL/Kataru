@@ -1194,6 +1194,8 @@ struct Index {
       }
       .layoutWeight(1)
       .barHeight(56)
+      // 关掉左右滑动切页：否则页面里的滑杆（音量/字号/调色）会被 Tabs 的滑动手势抢走
+      .scrollable(false)
       .onChange((index: number) => {
         this.currentTab = index;
       })
@@ -2704,6 +2706,11 @@ struct Index {
 
   /** 申请通知权限并发第一条通知（长时任务的必要配套 + 通知栏字幕） */
   private async setupNowPlayingNotification(chapter: Chapter): Promise<void> {
+    // 默认关：不能在用户没准备的时候弹系统权限框
+    if (!this.showNotification) {
+      return;
+    }
+
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const ok = await this.nowPlaying.ensurePermission(context);
     if (!ok) {
@@ -2723,6 +2730,9 @@ struct Index {
 
   /** 字幕变化时更新通知栏文字 */
   private syncNowPlaying(): void {
+    if (!this.showNotification) {
+      return;
+    }
     const book = this.selectedBook;
     const chapter = this.selectedChapter;
     if (book === null || chapter === null) {
