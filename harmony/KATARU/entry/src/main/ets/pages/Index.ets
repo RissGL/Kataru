@@ -8,6 +8,7 @@ import { util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
 import { Book, Chapter, LibraryScanner } from '../model/Library';
 import { BookStore } from '../model/BookStore';
+import { MediaSession } from '../model/MediaSession';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
 import { SubtitleSynchronizer } from '../model/SubtitleSynchronizer';
 import { Timecode } from '../model/Timecode';
@@ -71,6 +72,7 @@ struct Index {
   private tickTimer: number = -1;
   private readingScroller: Scroller = new Scroller();
   private lastProgressSaveMs: number = 0;
+  private mediaSession: MediaSession = new MediaSession();
 
   // ---------- 媒体库 ----------
   @State books: Book[] = [];
@@ -225,53 +227,85 @@ struct Index {
   }
 
   /** 把路径解码成 PixelMap（Image 组件对沙箱外路径不认，必须先解码） */
-  private loadPixelMap(path: string): image.PixelMap | undefined {
+  private async loadPixelMap(path: string): Promise<image.PixelMap | undefined> {
+    let file: fileIo.File | null = null;
+    let source: image.ImageSource | null = null;
+
     try {
-      const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+      // 先试路径重载（沙箱内路径最稳）；失败再退回 fd 版本
       try {
-        const source = image.createImageSource(file.fd);
-
-        // 按原图比例降采样：只限制最长边，两个方向都传死尺寸会把图压扁（拉伸的根源）
-        let options: image.DecodingOptions = {};
-        try {
-          const info = source.getImageInfoSync();
-          const maxEdge = 640;
-          const scale = Math.max(info.size.width, info.size.height) / maxEdge;
-          if (scale > 1) {
-            options.desiredSize = {
-              width: Math.round(info.size.width / scale),
-              height: Math.round(info.size.height / scale)
-            };
-          }
-          hilog.info(0x0000, Index.TAG, 'cover info: %{public}dx%{public}d',
-            info.size.width, info.size.height);
-        } catch (error) {
-          hilog.warn(0x0000, Index.TAG, 'cover info failed, decode as-is');
-        }
-
-        const pixel = source.createPixelMapSync(options);
-        source.release();
-        hilog.info(0x0000, Index.TAG, 'cover OK: %{public}s', path);
-        return pixel;
-      } finally {
-        fileIo.closeSync(file);
+        source = image.createImageSource(path);
+        hilog.info(0x0000, Index.TAG, 'cover source by path: %{public}s', path);
+      } catch (pathError) {
+        hilog.warn(0x0000, Index.TAG, 'cover source by path failed: %{public}s',
+          JSON.stringify(pathError));
+        source = null;
       }
+
+      if (source === null) {
+        file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+        source = image.createImageSource(file.fd);
+        hilog.info(0x0000, Index.TAG, 'cover source by fd: %{public}d', file.fd);
+      }
+
+      // 按原图比例降采样：只限制最长边，两个方向都传死尺寸会把图压扁（拉伸的根源）。
+      // 注意必须用异步 createPixelMap —— createPixelMapSync 在真机上会返回 undefined。
+      let options: image.DecodingOptions = {};
+      try {
+        const info = await source.getImageInfo();
+        const maxEdge = 640;
+        const scale = Math.max(info.size.width, info.size.height) / maxEdge;
+        if (scale > 1) {
+          options.desiredSize = {
+            width: Math.round(info.size.width / scale),
+            height: Math.round(info.size.height / scale)
+          };
+        }
+        hilog.info(0x0000, Index.TAG, 'cover info: %{public}dx%{public}d -> %{public}s',
+          info.size.width, info.size.height, JSON.stringify(options.desiredSize));
+      } catch (error) {
+        hilog.warn(0x0000, Index.TAG, 'cover info failed, decode as-is');
+      }
+
+      const pixel = await source.createPixelMap(options);
+      hilog.info(0x0000, Index.TAG, 'cover OK: %{public}s (%{public}d bytes)',
+        path, pixel.getPixelBytesNumber());
+      return pixel;
     } catch (error) {
       const err = error as BusinessError;
       hilog.error(0x0000, Index.TAG, 'cover FAILED: %{public}s code=%{public}d msg=%{public}s',
         path, err.code, err.message);
       return undefined;
+    } finally {
+      if (source !== null) {
+        try {
+          await source.release();
+        } catch (error) {
+          // 忽略
+        }
+      }
+      if (file !== null) {
+        try {
+          fileIo.closeSync(file);
+        } catch (error) {
+          // 忽略
+        }
+      }
     }
   }
 
-  /** 重建封面缓存（每次扫描/导入后调用） */
+  /** 重建封面缓存（每次扫描/导入后调用；异步解码完再更新状态） */
   private rebuildCovers(): void {
+    this.rebuildCoversAsync();
+  }
+
+  private async rebuildCoversAsync(): Promise<void> {
     const list: CoverItem[] = [];
     for (const book of this.books) {
       if (book.coverPath.length === 0) {
         continue;
       }
-      const pixel = this.loadPixelMap(book.coverPath);
+      const pixel = await this.loadPixelMap(book.coverPath);
       if (pixel !== undefined) {
         list.push(new CoverItem(book.coverPath, pixel));
       }
@@ -565,20 +599,55 @@ struct Index {
       const target = `${bookDir}/${safeFileName}`;
 
       try {
-        // 已存在就跳过（重复导入同一本时省时间）
-        if (fileIo.accessSync(target)) {
-          copied++;
-          continue;
+        // 源文件大小
+        const src = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+        let srcSize = 0;
+        try {
+          srcSize = fileIo.statSync(src.fd).size;
+        } catch (error) {
+          hilog.error(0x0000, Index.TAG, 'stat source failed: %{public}s', JSON.stringify(error));
         }
 
-        const src = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
-        try {
-          fileIo.copyFile(src.fd, target);
-          copied++;
-          hilog.info(0x0000, Index.TAG, 'copied: %{public}s', safeFileName);
-        } finally {
-          fileIo.closeSync(src);
+        // 已经复制过、且大小对得上就跳过；大小不对（比如上次失败留下空文件）就重拷
+        if (fileIo.accessSync(target)) {
+          let existing = 0;
+          try {
+            existing = fileIo.statSync(target).size;
+          } catch (error) {
+            existing = -1;
+          }
+
+          if (existing === srcSize && srcSize > 0) {
+            hilog.info(0x0000, Index.TAG, 'copy skip (same size %{public}d): %{public}s',
+              srcSize, safeFileName);
+            copied++;
+            fileIo.closeSync(src);
+            continue;
+          }
+
+          hilog.warn(0x0000, Index.TAG, 'copy redo (existing=%{public}d src=%{public}d): %{public}s',
+            existing, srcSize, safeFileName);
+          try {
+            fileIo.unlinkSync(target);
+          } catch (error) {
+            // 删不掉就覆盖写
+          }
         }
+
+        // 分块复制。
+        // 不能用 fileIo.copyFile(fd, path)：实测它会"成功"但写出 0 字节的空文件，
+        // 于是音频打不开(5400106)、字幕 0 行、封面解码失败。这里自己读+写并校验字节数。
+        const written = this.copyFdToFile(src.fd, srcSize, target);
+        hilog.info(0x0000, Index.TAG, 'copied: %{public}s (%{public}d/%{public}d bytes)',
+          safeFileName, written, srcSize);
+
+        if (written === srcSize && srcSize > 0) {
+          copied++;
+        } else {
+          hilog.error(0x0000, Index.TAG, 'copy INCOMPLETE: %{public}s', safeFileName);
+        }
+
+        fileIo.closeSync(src);
       } catch (error) {
         hilog.error(0x0000, Index.TAG, 'copy failed: %{public}s %{public}s',
           safeFileName, JSON.stringify(error));
@@ -589,6 +658,35 @@ struct Index {
       copied, uris.length, bookDir);
 
     return copied;
+  }
+
+  /** 从 fd 分块读到目标文件，返回写入字节数 */
+  private copyFdToFile(srcFd: number, srcSize: number, target: string): number {
+    const chunk = 4 * 1024 * 1024;
+    const buffer = new ArrayBuffer(chunk);
+
+    const dst = fileIo.openSync(target,
+      fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+
+    let written = 0;
+    try {
+      let readOffset = 0;
+      while (readOffset < srcSize) {
+        const want = Math.min(chunk, srcSize - readOffset);
+        const read = fileIo.readSync(srcFd, buffer, { offset: readOffset, length: want });
+        if (read <= 0) {
+          break;
+        }
+
+        const wrote = fileIo.writeSync(dst.fd, buffer, { offset: written, length: read });
+        written += wrote;
+        readOffset += read;
+      }
+    } finally {
+      fileIo.closeSync(dst);
+    }
+
+    return written;
   }
 
   /**
@@ -656,8 +754,15 @@ struct Index {
     return [book];
   }
 
+  /** 退到后台时保存进度（切走 App 也不会丢位置） */
+  onPageHide(): void {
+    this.saveProgress(true);
+  }
+
   aboutToDisappear(): void {
+    this.saveProgress(true);
     this.stopTicker();
+    this.mediaSession.stop();
     this.releasePlayer();
   }
 
@@ -1332,6 +1437,9 @@ struct Index {
           player.setVolume(this.volume);
           // 自动开始播放（点书即听，和桌面版一致）
           player.play();
+
+          // 接上系统播控：后台继续播放 + 锁屏/播控中心显示当前这句字幕
+          this.startMediaSession();
         } else if (state === 'playing') {
           this.isPlaying = true;
           this.startTicker();
@@ -1339,6 +1447,7 @@ struct Index {
           this.isPlaying = false;
           this.stopTicker();
           this.saveProgress(false);
+          this.syncMediaSession(true);
         } else if (state === 'completed') {
           this.isPlaying = false;
           this.stopTicker();
@@ -1624,7 +1733,89 @@ struct Index {
       this.secondarySynchronizer.update(player.currentTime);
       this.applyCurrentLine();
       this.saveProgress(false);
+      this.syncMediaSession(false);
     }, 100);
+  }
+
+  // ==================== 系统播控（后台播放 / 锁屏字幕） ====================
+
+  /** 启动媒体会话，并把系统的播放/暂停/切章/拖动接回来 */
+  private async startMediaSession(): Promise<void> {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    await this.mediaSession.start(
+      context,
+      () => this.resumeFromSystem(),
+      () => this.pauseFromSystem(),
+      () => this.playNextChapter(),
+      () => this.playPreviousChapter(),
+      (positionMs: number) => this.seekTo(positionMs)
+    );
+    await this.mediaSession.setLaunchAbility(context);
+    this.syncMediaSession(true);
+  }
+
+  /** 把当前书本/章节/字幕/进度推到播控中心（锁屏就能看到字幕） */
+  private syncMediaSession(force: boolean): void {
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (book === null || chapter === null) {
+      return;
+    }
+
+    this.mediaSession.update(
+      book.title,
+      chapter.title,
+      this.currentText,
+      this.positionMs,
+      this.durationMs,
+      this.isPlaying
+    );
+  }
+
+  private resumeFromSystem(): void {
+    const player = this.player;
+    if (player === null) {
+      return;
+    }
+    player.play();
+  }
+
+  private pauseFromSystem(): void {
+    const player = this.player;
+    if (player === null) {
+      return;
+    }
+    player.pause();
+    this.saveProgress(true);
+  }
+
+  private playNextChapter(): void {
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (book === null || chapter === null) {
+      return;
+    }
+    const index = this.chapterIndexOf(chapter);
+    if (index >= 0 && index + 1 < book.chapters.length) {
+      this.openChapter(book.chapters[index + 1]);
+    }
+  }
+
+  private playPreviousChapter(): void {
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (book === null || chapter === null) {
+      return;
+    }
+    const index = this.chapterIndexOf(chapter);
+    // 听过 3 秒以上就回到本段开头，否则上一章（和桌面版一致）
+    if (this.positionMs > 3000) {
+      this.seekTo(0);
+      return;
+    }
+    if (index > 0) {
+      this.openChapter(book.chapters[index - 1]);
+    }
   }
 
   private stopTicker(): void {

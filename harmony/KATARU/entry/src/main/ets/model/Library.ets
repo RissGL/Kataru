@@ -154,8 +154,21 @@ export class LibraryScanner {
     subtitleFiles.sort(LibraryScanner.naturalCompare);
 
     for (const audio of audioFiles) {
+      const audioPath = `${folderPath}/${audio}`;
+
+      // 跳过 0 字节文件：之前 copyFile 坏掉时留下过空文件，
+      // 这种"书"扫进来也放不了，不如不显示（否则用户会以为播放坏了）。
+      try {
+        const size = fileIo.statSync(audioPath).size;
+        if (size <= 0) {
+          continue;
+        }
+      } catch (error) {
+        continue;
+      }
+
       const stem = LibraryScanner.stemOf(audio);
-      const chapter = new Chapter(`${folderPath}/${audio}`, stem);
+      const chapter = new Chapter(audioPath, stem);
 
       // 配对字幕：同名优先，其次同名 + 语言后缀
       let exact = '';
