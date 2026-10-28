@@ -189,6 +189,8 @@ struct Index {
   /** 界面缩放 0.8–1.4（对应桌面版三处 zoom） */
   @State uiScale: number = 1;
   @State coverFill: boolean = false;
+  /** 界面文字是否跟随字幕字体（阅读页/书名/标题） */
+  @State uiFontFollow: boolean = true;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -384,6 +386,7 @@ struct Index {
       this.showNotification = store.getSync('showNotification', false) as boolean;
       this.uiScale = store.getSync('uiScale', 1) as number;
       this.coverFill = store.getSync('coverFill', false) as boolean;
+      this.uiFontFollow = store.getSync('uiFontFollow', true) as boolean;
       this.showSecondary = store.getSync('showSecondary', true) as boolean;
       this.autoNext = store.getSync('autoNext', true) as boolean;
       this.volume = store.getSync('volume', 1) as number;
@@ -412,6 +415,7 @@ struct Index {
       store.putSync('showNotification', this.showNotification);
       store.putSync('uiScale', this.uiScale);
       store.putSync('coverFill', this.coverFill);
+      store.putSync('uiFontFollow', this.uiFontFollow);
       store.putSync('showSecondary', this.showSecondary);
       store.putSync('autoNext', this.autoNext);
       store.putSync('volume', this.volume);
@@ -449,6 +453,15 @@ struct Index {
     } catch (error) {
       hilog.error(0x0000, Index.TAG, 'registerFont failed: %{public}s', JSON.stringify(error));
     }
+  }
+
+  /**
+   * 界面文字用的字族。
+   * 开启「界面跟随字幕字体」后，阅读页正文、书名、播放页标题都会用同一个字体，
+   * 这样选了思源宋体就是整本书的排版风格，而不是只有大字幕变了。
+   */
+  private uiFont(): string {
+    return this.uiFontFollow ? this.fontFamilyValue : 'HarmonyOS Sans SC';
   }
 
   /** 按当前设置挑字族：思源宋体 + 加粗时用内置 Bold 字族 */
@@ -1353,6 +1366,7 @@ struct Index {
                 .fontColor(this.theme.gold)
               Text(this.selectedChapter.title)
                 .fontSize(12)
+                .fontFamily(this.uiFont())
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .fontColor(this.theme.textPrimary)
@@ -1541,6 +1555,7 @@ struct Index {
 
       Text(this.selectedBook === null ? '未选择书' : this.selectedBook.title)
         .fontSize(16)
+        .fontFamily(this.uiFont())
         .fontWeight(FontWeight.Medium)
         .fontColor(this.theme.textPrimary)
         .margin({ top: 10 })
@@ -1742,6 +1757,7 @@ struct Index {
         Column() {
           Text(this.selectedBook === null ? '先到书库选一本书' : '这一章没有配到字幕')
             .fontSize(15)
+            .fontFamily(this.uiFont())
             .fontColor(this.theme.textPrimary)
 
           Text('字幕要和音频放同一个目录、文件名相同（01.mp3 配 01.srt）')
@@ -1766,6 +1782,7 @@ struct Index {
                 Column() {
                   Text(line.text)
                     .fontSize(16 * this.uiScale)
+                    .fontFamily(this.uiFont())
                     .lineHeight(24 * this.uiScale)
                     .width('100%')
                     .fontColor(index === this.currentIndex ? this.theme.textPrimary : this.theme.textSecondary)
@@ -1775,6 +1792,7 @@ struct Index {
                   if (this.showSecondary && this.secondaryLines.length > 0) {
                     Text(this.secondaryTextAt(line.startMs))
                       .fontSize(13 * this.uiScale)
+                      .fontFamily(this.uiFont())
                       .lineHeight(19 * this.uiScale)
                       .width('100%')
                       .fontColor(this.theme.textSecondary)
@@ -2027,6 +2045,21 @@ struct Index {
           }, (choice: FontChoice) => choice.value)
         }
         .width('100%')
+
+        Row() {
+          Text('界面文字也用这个字体（阅读页/书名/标题）')
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.uiFontFollow })
+            .selectedColor(this.theme.accent)
+            .onChange((isOn: boolean) => {
+              this.uiFontFollow = isOn;
+              this.saveSettings();
+            })
+        }
+        .width('100%')
+        .padding({ top: 6, bottom: 2 })
 
         // 字幕颜色（对应桌面版的配色/字幕颜色设置）
         Text('颜色')
