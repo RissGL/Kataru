@@ -225,8 +225,9 @@ public sealed class LanShareServer : IDisposable
                         var durationText = QueryValue(query, "duration");
                         var positionValue = double.TryParse(positionText, out var posParsed) ? posParsed : 0;
                         var durationValue = double.TryParse(durationText, out var durParsed) ? durParsed : 0;
-                        payload = "{\"audioName\":\"" + audioName + "\",\"positionSeconds\":" +
-                                  positionValue + ",\"durationSeconds\":" + durationValue + "}";
+                        var bookTitle = QueryValue(query, "book").Replace("\\", "\\\\").Replace("\"", "\\\"");
+                        payload = "{\"audioName\":\"" + audioName + "\",\"bookTitle\":\"" + bookTitle +
+                                  "\",\"positionSeconds\":" + positionValue + ",\"durationSeconds\":" + durationValue + "}";
                     }
 
                     var accepted = ProgressReceiver?.Invoke(payload) ?? false;

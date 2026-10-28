@@ -4117,8 +4117,8 @@ struct Index {
 
   /** 存当前位置；force=false 时最多 5 秒存一次，避免刷盘太频繁 */
   private saveProgress(force: boolean): void {
-    // 暂停/切后台时顺手把进度回传电脑（内部自己有 60 秒节流）
-    this.pushProgressToServer(false);
+    // 暂停/切后台/强制保存时立刻回传；播放中的定期保存走 60 秒节流
+    this.pushProgressToServer(force);
     const chapter = this.selectedChapter;
     if (chapter === null) {
       return;
@@ -4344,6 +4344,7 @@ struct Index {
     // 我们那个裸 TCP 服务不会回 100，会一直等到超时。
     const url = base + '/api/progress' +
       '?audioName=' + encodeURIComponent(audioName) +
+      '&book=' + encodeURIComponent(book.title) +
       '&position=' + (this.positionMs / 1000).toFixed(2) +
       '&duration=' + (this.durationMs / 1000).toFixed(2);
 

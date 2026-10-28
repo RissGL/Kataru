@@ -1659,24 +1659,34 @@ namespace AudioBookPlayer.ViewModels
 
                 var positionSeconds = root.TryGetProperty("positionSeconds", out var posElement) ? posElement.GetDouble() : 0;
                 var durationSeconds = root.TryGetProperty("durationSeconds", out var durElement) ? durElement.GetDouble() : 0;
+                var bookTitle = root.TryGetProperty("bookTitle", out var bookElement) ? bookElement.GetString() : null;
 
-                foreach (var book in Books)
+                // 先按"书名 + 主干名"精确匹配（同一文件在不同文件夹时不会写错），失败再退回只按主干名
+                for (var pass = 0; pass < 2; pass++)
                 {
-                    foreach (var entry in book.Entries)
-                    {
-                        // 手机播放时会把 .m4b 改名成 .m4a，按主干名比
-                        if (!string.Equals(Path.GetFileNameWithoutExtension(entry.AudioPath), Path.GetFileNameWithoutExtension(audioName), StringComparison.OrdinalIgnoreCase))
-                        {
-                            continue;
-                        }
+                    var needTitle = pass == 0;
+                    if (needTitle && string.IsNullOrWhiteSpace(bookTitle)) continue;
 
-                        _playback.Update(
-                            entry.AudioPath,
-                            TimeSpan.FromSeconds(positionSeconds),
-                            TimeSpan.FromSeconds(durationSeconds > 0 ? durationSeconds : 1));
-                        _playback.Save(force: true);
-                        LanShareStatus = $"已接收手机进度：{book.Title}";
-                        return true;
+                    foreach (var book in Books)
+                    {
+                        if (needTitle && !string.Equals(book.Title, bookTitle, StringComparison.OrdinalIgnoreCase)) continue;
+
+                        foreach (var entry in book.Entries)
+                        {
+                            // 手机播放时会把 .m4b 改名成 .m4a，按主干名比
+                            if (!string.Equals(Path.GetFileNameWithoutExtension(entry.AudioPath), Path.GetFileNameWithoutExtension(audioName), StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            _playback.Update(
+                                entry.AudioPath,
+                                TimeSpan.FromSeconds(positionSeconds),
+                                TimeSpan.FromSeconds(durationSeconds > 0 ? durationSeconds : 1));
+                            _playback.Save(force: true);
+                            LanShareStatus = $"已接收手机进度：{book.Title}";
+                            return true;
+                        }
                     }
                 }
 

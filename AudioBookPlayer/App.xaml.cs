@@ -44,6 +44,25 @@ namespace AudioBookPlayer
         }
 
         /// <summary>无头运行：--serve [书库目录]，只把书库通过局域网共享出去。</summary>
+        /// <summary>把收到的进度写进 PlaybackStore：只命中真实存在的文件。</summary>
+        private static bool TryWriteProgress(IEnumerable<string> candidatePaths, string audioName,
+            double positionSeconds, double durationSeconds, PlaybackStore playbackStore)
+        {
+            var targetStem = Path.GetFileNameWithoutExtension(audioName);
+            foreach (var path in candidatePaths)
+            {
+                if (!File.Exists(path)) continue;
+                if (!string.Equals(Path.GetFileNameWithoutExtension(path), targetStem, StringComparison.OrdinalIgnoreCase)) continue;
+
+                playbackStore.Update(path, TimeSpan.FromSeconds(positionSeconds),
+                    TimeSpan.FromSeconds(durationSeconds > 0 ? durationSeconds : 1));
+                playbackStore.Save(force: true);
+                Console.WriteLine($"收到手机进度：{Path.GetFileName(path)} @ {TimeSpan.FromSeconds(positionSeconds)}");
+                return true;
+            }
+
+            return false;
+        }
         private static void RunHeadlessServer(string[] args)
         {
             var settings = AppSettings.Load();
@@ -150,24 +169,34 @@ namespace AudioBookPlayer
                     var positionSeconds = root.TryGetProperty("positionSeconds", out var pos) ? pos.GetDouble() : 0;
                     var durationSeconds = root.TryGetProperty("durationSeconds", out var dur) ? dur.GetDouble() : 0;
 
-                    foreach (var entry in entries)
-                    {
-                        for (var i = 0; i < entry.AudioPaths.Count; i++)
-                        {
-                            // 手机播放时会把 .m4b 改名成 .m4a，所以按"去扩展名的主干名"比，不能比完整文件名
-                            if (!string.Equals(Path.GetFileNameWithoutExtension(entry.AudioPaths[i]), Path.GetFileNameWithoutExtension(audioName), StringComparison.OrdinalIgnoreCase))
-                            {
-                                continue;
-                            }
+                    var bookTitle = root.TryGetProperty("bookTitle", out var bookEl) ? bookEl.GetString() : null;
 
-                            playbackStore.Update(entry.AudioPaths[i], TimeSpan.FromSeconds(positionSeconds),
-                                TimeSpan.FromSeconds(durationSeconds > 0 ? durationSeconds : 1));
-                            playbackStore.Save(force: true);
-                            Console.WriteLine($"收到手机进度：{audioName} @ {TimeSpan.FromSeconds(positionSeconds)}");
-                            return true;
+                    IEnumerable<string> AllPaths()
+                    {
+                        foreach (var entry in entries)
+                        {
+                            foreach (var path in entry.AudioPaths) yield return path;
                         }
                     }
-                    return false;
+
+                    IEnumerable<string> PathsOfBook()
+                    {
+                        foreach (var entry in entries)
+                        {
+                            if (!string.Equals(entry.Info.Title, bookTitle, StringComparison.OrdinalIgnoreCase)) continue;
+                            foreach (var path in entry.AudioPaths) yield return path;
+                        }
+                    }
+
+                    // 先按"书名 + 主干名"精确匹配（同一文件在不同文件夹时不会写错）
+                    if (!string.IsNullOrWhiteSpace(bookTitle) &&
+                        TryWriteProgress(PathsOfBook(), audioName, positionSeconds, durationSeconds, playbackStore))
+                    {
+                        return true;
+                    }
+
+                    // 兜底：只按主干名（手机把 .m4b 改名成 .m4a 了，不能比完整文件名）
+                    return TryWriteProgress(AllPaths(), audioName, positionSeconds, durationSeconds, playbackStore);
                 }
                 catch (Exception ex)
                 {
