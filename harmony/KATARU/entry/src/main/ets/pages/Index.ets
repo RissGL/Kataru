@@ -18,6 +18,8 @@ import { THEME_PRESETS, ThemeColors, ThemePreset, ThemeStore } from '../model/Th
 import { AudioChapterMark, Mp4Chapters } from '../model/Mp4Chapters';
 import { ColorUtil, Hsl } from '../model/ColorUtil';
 import { ColorPlate } from '../controls/ColorPlate';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { display } from '@kit.ArkUI';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
 import { SubtitleSynchronizer } from '../model/SubtitleSynchronizer';
 import { Timecode } from '../model/Timecode';
@@ -255,6 +257,16 @@ struct Index {
   @State coverFill: boolean = false;
   /** 界面文字是否跟随字幕字体（阅读页/书名/标题） */
   @State uiFontFollow: boolean = true;
+  /** 自定义背景图 */
+  @State backgroundPath: string = '';
+  @State backgroundPixel: image.PixelMap | null = null;
+  @State backgroundDim: number = 40;
+  @State backgroundBlur: number = 14;
+  /** 睡眠定时：剩余分钟（0 = 关闭） */
+  @State sleepMinutes: number = 0;
+  private sleepDeadline: number = 0;
+  /** 阅读页行高 */
+  @State readingLineHeight: number = 24;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -310,6 +322,112 @@ struct Index {
       return this.theme.gold;
     }
     return this.theme.textPrimary;
+  }
+
+  /** 解码背景图（沙箱路径 Image 无法直接加载，要转 PixelMap） */
+  private async loadBackgroundPixel(): Promise<void> {
+    if (this.backgroundPath.length === 0) {
+      this.backgroundPixel = null;
+      return;
+    }
+    try {
+      const file = fileIo.openSync(this.backgroundPath, fileIo.OpenMode.READ_ONLY);
+      const source = image.createImageSource(file.fd);
+      const info = await source.getImageInfo();
+      const screenWidth = display.getDefaultDisplaySync().width;
+      const options: image.DecodingOptions = {
+        desiredSize: {
+          width: Math.round(screenWidth),
+          height: Math.round(screenWidth * info.size.height / info.size.width)
+        }
+      };
+      this.backgroundPixel = await source.createPixelMap(options);
+      source.release();
+      fileIo.closeSync(file);
+      hilog.info(0x0000, Index.TAG, 'background loaded');
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'background load failed: %{public}s', JSON.stringify(error));
+      this.backgroundPixel = null;
+    }
+  }
+
+  /** 选一张图当背景（拷进沙箱） */
+  private async chooseBackgroundImage(): Promise<void> {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const options: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions();
+      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
+      const picker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker();
+      const result: photoAccessHelper.PhotoSelectResult = await picker.select(options);
+      if (result.photoUris.length === 0) {
+        return;
+      }
+
+      const target = context.filesDir + '/background_' + Date.now() + '.img';
+      const source = fileIo.openSync(result.photoUris[0], fileIo.OpenMode.READ_ONLY);
+      fileIo.copyFileSync(source.fd, target);
+      fileIo.closeSync(source);
+
+      if (this.backgroundPath.length > 0) {
+        try {
+          fileIo.unlinkSync(this.backgroundPath);
+        } catch (error) {
+          hilog.warn(0x0000, Index.TAG, 'remove old background failed');
+        }
+      }
+
+      this.backgroundPath = target;
+      this.saveSettings();
+      await this.loadBackgroundPixel();
+      this.statusText = '背景已更新';
+    } catch (error) {
+      const err = error as BusinessError;
+      this.statusText = '选背景失败：' + err.message;
+    }
+  }
+
+  /** 清除背景 */
+  private clearBackgroundImage(): void {
+    if (this.backgroundPath.length > 0) {
+      try {
+        fileIo.unlinkSync(this.backgroundPath);
+      } catch (error) {
+        hilog.warn(0x0000, Index.TAG, 'unlink background failed');
+      }
+    }
+    this.backgroundPath = '';
+    this.backgroundPixel = null;
+    this.saveSettings();
+    this.statusText = '背景已清除';
+  }
+
+  /** 设定睡眠定时（分钟，0 = 关闭） */
+  private setSleepTimer(minutes: number): void {
+    this.sleepMinutes = minutes;
+    if (minutes <= 0) {
+      this.sleepDeadline = 0;
+      this.statusText = '睡眠定时已关闭';
+      return;
+    }
+    this.sleepDeadline = Date.now() + minutes * 60 * 1000;
+    this.statusText = `睡前定时：${minutes} 分钟后暂停`;
+  }
+
+  /** 每帧检查睡眠定时是否到点 */
+  private checkSleepTimer(): void {
+    if (this.sleepDeadline <= 0) {
+      return;
+    }
+    const remaining = this.sleepDeadline - Date.now();
+    if (remaining > 0) {
+      this.sleepMinutes = Math.ceil(remaining / 60000);
+      return;
+    }
+    this.sleepDeadline = 0;
+    this.sleepMinutes = 0;
+    this.statusText = '睡眠定时到点，已暂停';
+    this.togglePlay();
   }
 
   /** 调色盘取色：HSV → 十六进制，并写回对应色位 */
@@ -500,6 +618,13 @@ struct Index {
       this.uiScale = store.getSync('uiScale', 1) as number;
       this.coverFill = store.getSync('coverFill', false) as boolean;
       this.uiFontFollow = store.getSync('uiFontFollow', true) as boolean;
+      this.backgroundPath = store.getSync('backgroundPath', '') as string;
+      this.backgroundDim = store.getSync('backgroundDim', 40) as number;
+      this.backgroundBlur = store.getSync('backgroundBlur', 14) as number;
+      this.readingLineHeight = store.getSync('readingLineHeight', 24) as number;
+      if (this.backgroundPath.length > 0) {
+        this.loadBackgroundPixel();
+      }
       this.showSecondary = store.getSync('showSecondary', true) as boolean;
       this.autoNext = store.getSync('autoNext', true) as boolean;
       this.volume = store.getSync('volume', 1) as number;
@@ -540,6 +665,10 @@ struct Index {
       store.putSync('uiScale', this.uiScale);
       store.putSync('coverFill', this.coverFill);
       store.putSync('uiFontFollow', this.uiFontFollow);
+      store.putSync('backgroundPath', this.backgroundPath);
+      store.putSync('backgroundDim', this.backgroundDim);
+      store.putSync('backgroundBlur', this.backgroundBlur);
+      store.putSync('readingLineHeight', this.readingLineHeight);
       store.putSync('showSecondary', this.showSecondary);
       store.putSync('autoNext', this.autoNext);
       store.putSync('volume', this.volume);
@@ -1374,6 +1503,22 @@ struct Index {
   }
 
   build() {
+    Stack() {
+      // 自定义背景图：铺满 + 模糊，再盖一层黑色压暗，保证文字清晰
+      if (this.backgroundPixel !== null) {
+        Image(this.backgroundPixel)
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+          .blur(this.backgroundBlur)
+
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor('#000000')
+          .opacity(this.backgroundDim / 100)
+      }
+
     Column() {
       // 顶栏
       Row() {
@@ -1428,6 +1573,10 @@ struct Index {
       .onChange((index: number) => {
         this.currentTab = index;
       })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.backgroundPixel === null ? this.theme.pageBackground : Color.Transparent)
     }
     .width('100%')
     .height('100%')
@@ -1942,7 +2091,7 @@ struct Index {
                   Text(line.text)
                     .fontSize(16 * this.uiScale)
                     .fontFamily(this.uiFont())
-                    .lineHeight(24 * this.uiScale)
+                    .lineHeight(this.readingLineHeight * this.uiScale)
                     .width('100%')
                     .fontColor(index === this.currentIndex ? this.theme.textPrimary : this.theme.textSecondary)
                     .fontWeight(index === this.currentIndex ? FontWeight.Medium : FontWeight.Normal)
@@ -2047,6 +2196,76 @@ struct Index {
   SettingsPage() {
     Scroll() {
       Column() {
+        this.SectionTitle('背景')
+        Row() {
+          Text(this.backgroundPath.length > 0 ? '已设置自定义背景' : '使用主题纯色背景')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Row() {
+          Button('选择背景图')
+            .height(36)
+            .layoutWeight(1)
+            .fontSize(13)
+            .backgroundColor(this.theme.panelBackground)
+            .fontColor(this.theme.textPrimary)
+            .onClick(() => this.chooseBackgroundImage())
+
+          Button('清除')
+            .height(36)
+            .width(80)
+            .fontSize(13)
+            .margin({ left: 8 })
+            .backgroundColor(this.theme.panelBackground)
+            .fontColor(this.theme.textSecondary)
+            .onClick(() => this.clearBackgroundImage())
+        }
+        .width('100%')
+        .margin({ top: 6 })
+
+        if (this.backgroundPath.length > 0) {
+          Row() {
+            Text('压暗')
+              .fontFamily(this.uiFont())
+              .fontSize(12)
+              .width(36)
+              .fontColor(this.theme.textSecondary)
+            Slider({ value: this.backgroundDim, min: 0, max: 85, step: 5 })
+              .layoutWeight(1)
+              .selectedColor(this.theme.gold)
+              .onChange((value: number) => {
+                this.backgroundDim = value;
+                this.saveSettingsSoon();
+              })
+          }
+          .width('100%')
+
+          Row() {
+            Text('模糊')
+              .fontFamily(this.uiFont())
+              .fontSize(12)
+              .width(36)
+              .fontColor(this.theme.textSecondary)
+            Slider({ value: this.backgroundBlur, min: 0, max: 40, step: 2 })
+              .layoutWeight(1)
+              .selectedColor(this.theme.gold)
+              .onChange((value: number, mode: SliderChangeMode) => {
+                if (mode === SliderChangeMode.Moving) {
+                  return;
+                }
+                this.backgroundBlur = value;
+                this.saveSettingsSoon();
+              })
+          }
+          .width('100%')
+        }
+
+        Blank().height(6)
         this.SectionTitle('媒体库')
 
         Row() {
@@ -2315,6 +2534,32 @@ struct Index {
               this.subtitleBold = isOn;
               this.saveSettings();
             })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Blank().height(6)
+        this.SectionTitle('睡眠定时')
+
+        Row() {
+          Text(this.sleepMinutes > 0 ? `还剩 ${this.sleepMinutes} 分钟` : '未启用')
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textSecondary)
+          Blank()
+          Row() {
+            ForEach([0, 15, 30, 45, 60, 90], (minutes: number) => {
+              Text(minutes === 0 ? '关' : `${minutes}分`)
+                .fontFamily(this.uiFont())
+                .fontSize(12)
+                .padding({ left: 9, right: 9, top: 5, bottom: 5 })
+                .margin({ left: 5 })
+                .borderRadius(12)
+                .backgroundColor(minutes > 0 && this.sleepMinutes === minutes ? this.theme.accent : this.theme.panelBackground)
+                .fontColor(minutes > 0 && this.sleepMinutes === minutes ? '#FFFFFF' : this.theme.textPrimary)
+                .onClick(() => this.setSleepTimer(minutes))
+            }, (minutes: number) => minutes.toString())
+          }
         }
         .width('100%')
         .padding({ top: 4, bottom: 4 })
@@ -3203,6 +3448,9 @@ struct Index {
     if (currentMs < 0) {
       return;
     }
+
+    // 睡眠定时：到点自动暂停
+    this.checkSleepTimer();
 
     this.positionMs = currentMs;
     this.synchronizer.update(currentMs);
