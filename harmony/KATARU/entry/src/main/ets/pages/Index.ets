@@ -292,6 +292,8 @@ struct Index {
   @State readingParagraphGap: number = 4;
   /** 背景渐变预设下标（-1 = 不用渐变） */
   @State backgroundGradient: number = -1;
+  /** 设置页当前分组：0 外观 1 字幕 2 播放 3 其他 */
+  @State settingsGroup: number = 0;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -2240,6 +2242,10 @@ struct Index {
   SettingsPage() {
     Scroll() {
       Column() {
+        this.SettingsTabs()
+
+        // 分段显示：一次只构建一组，既好找也不卡
+        if (this.settingsGroup === 0) {
         this.SectionTitle('背景')
         Row() {
           Text(this.backgroundPath.length > 0 ? '已设置自定义背景' : '使用主题纯色背景')
@@ -2372,48 +2378,6 @@ struct Index {
         }
 
         Blank().height(6)
-        this.SectionTitle('媒体库')
-
-        Row() {
-          Text('书本存放位置')
-          .fontFamily(this.uiFont())
-            .fontSize(13)
-            .fontColor(this.theme.textPrimary)
-          Blank()
-          Text('App 内部目录（导入的书）')
-          .fontFamily(this.uiFont())
-            .fontSize(11)
-            .fontColor(this.theme.textSecondary)
-            .maxLines(1)
-        }
-        .width('100%')
-        .padding({ top: 6, bottom: 6 })
-
-        Button('选择书库文件夹')
-          .width('100%')
-          .height(40)
-          .margin({ top: 8, bottom: 6 })
-          .backgroundColor(this.theme.accent)
-          .fontColor(Color.White)
-          .onClick(() => this.chooseLibraryFolder())
-
-
-        Button('重新扫描')
-          .width('100%')
-          .height(36)
-          .margin({ top: 0, bottom: 6 })
-          .backgroundColor(this.theme.panelBackground)
-          .fontColor(this.theme.textPrimary)
-          .onClick(() => this.rescanSandbox())
-
-        Text('选一次文件夹就会同步进 App，之后书架直接可用；源里新增/删除书后再点一次即可。')
-        .fontFamily(this.uiFont())
-          .fontSize(11)
-          .fontColor(this.theme.textSecondary)
-          .width('100%')
-          .margin({ bottom: 6 })
-        Blank().height(10)
-
         this.SectionTitle('配色')
 
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -2538,6 +2502,9 @@ struct Index {
 
         Blank().height(10)
 
+        }
+
+        if (this.settingsGroup === 1) {
         this.SectionTitle('字幕外观')
 
         Row() {
@@ -2675,22 +2642,36 @@ struct Index {
         .width('100%')
 
         Row() {
-          Text('加粗字幕')
-          .fontFamily(this.uiFont())
+          Text('字重')
+            .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
-          Toggle({ type: ToggleType.Switch, isOn: this.subtitleBold })
-            .selectedColor(this.theme.accent)
-            .onChange((isOn: boolean) => {
-              this.subtitleBold = isOn;
-              this.saveSettings();
-            })
+          Row() {
+            ForEach([300, 400, 500, 700, 900], (weight: number) => {
+              Text(this.weightLabel(weight))
+                .fontFamily(this.uiFont())
+                .fontSize(12)
+                .padding({ left: 7, right: 7, top: 5, bottom: 5 })
+                .margin({ left: 4 })
+                .borderRadius(11)
+                .backgroundColor(this.subtitleWeight === weight ? this.theme.accent : this.theme.panelBackground)
+                .fontColor(this.subtitleWeight === weight ? '#FFFFFF' : this.theme.textPrimary)
+                .onClick(() => {
+                  this.subtitleWeight = weight;
+                  this.subtitleBold = weight >= 700;
+                  this.saveSettings();
+                })
+            }, (weight: number) => weight.toString())
+          }
         }
         .width('100%')
         .padding({ top: 4, bottom: 4 })
 
         Blank().height(6)
+        }
+
+        if (this.settingsGroup === 2) {
         this.SectionTitle('睡眠定时')
 
         Row() {
@@ -2849,6 +2830,51 @@ struct Index {
 
         Blank().height(10)
 
+        }
+
+        if (this.settingsGroup === 3) {
+        this.SectionTitle('媒体库')
+
+        Row() {
+          Text('书本存放位置')
+          .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Text('App 内部目录（导入的书）')
+          .fontFamily(this.uiFont())
+            .fontSize(11)
+            .fontColor(this.theme.textSecondary)
+            .maxLines(1)
+        }
+        .width('100%')
+        .padding({ top: 6, bottom: 6 })
+
+        Button('选择书库文件夹')
+          .width('100%')
+          .height(40)
+          .margin({ top: 8, bottom: 6 })
+          .backgroundColor(this.theme.accent)
+          .fontColor(Color.White)
+          .onClick(() => this.chooseLibraryFolder())
+
+
+        Button('重新扫描')
+          .width('100%')
+          .height(36)
+          .margin({ top: 0, bottom: 6 })
+          .backgroundColor(this.theme.panelBackground)
+          .fontColor(this.theme.textPrimary)
+          .onClick(() => this.rescanSandbox())
+
+        Text('选一次文件夹就会同步进 App，之后书架直接可用；源里新增/删除书后再点一次即可。')
+        .fontFamily(this.uiFont())
+          .fontSize(11)
+          .fontColor(this.theme.textSecondary)
+          .width('100%')
+          .margin({ bottom: 6 })
+        Blank().height(10)
+
         this.SectionTitle('数据')
 
         Button('清除播放记录')
@@ -2889,6 +2915,7 @@ struct Index {
           .fontColor(this.theme.textSecondary)
           .width('100%')
           .lineHeight(18)
+        }
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 20 })
@@ -2898,6 +2925,30 @@ struct Index {
     .height('100%')
     .scrollBar(BarState.Auto)
   }
+
+  /** 设置页分组切换条 */
+  @Builder
+  SettingsTabs() {
+    Row() {
+      ForEach(['外观', '字幕', '播放', '其他'], (label: string, index: number) => {
+        Text(label)
+          .fontFamily(this.uiFont())
+          .fontSize(13)
+          .layoutWeight(1)
+          .textAlign(TextAlign.Center)
+          .padding({ top: 8, bottom: 8 })
+          .borderRadius(8)
+          .backgroundColor(this.settingsGroup === index ? this.theme.accent : this.theme.panelBackground)
+          .fontColor(this.settingsGroup === index ? '#FFFFFF' : this.theme.textPrimary)
+          .onClick(() => {
+            this.settingsGroup = index;
+          })
+      }, (label: string) => label)
+    }
+    .width('100%')
+    .padding({ top: 6, bottom: 10 })
+  }
+
 
   @Builder
   SectionTitle(text: string) {
