@@ -112,6 +112,14 @@ struct Index {
   private readingScroller: Scroller = new Scroller();
   private lastProgressSaveMs: number = 0;
   private currentAudioFile: fileIo.File | null = null;
+  /**
+   * 数据源描述符必须**长期持有**。
+   * 之前只在局部变量里，GC 之后原生线程回调会拿到 NULL 函数句柄 → SIGSEGV（10 次 cppcrash）。
+   */
+  private keepAliveDataSource: media.AVDataSrcDescriptor | null = null;
+  /** .m4b 降级只做一次，避免死循环 */
+  private m4bFallbackDone: boolean = false;
+  /** 封面显示方式：false = 完整显示（Contain，不裁切），true = 裁切填充（Cover） */
   private backgroundTaskActive: boolean = false;
   private backgroundWantAgent: WantAgent | null = null;
   private subtitleCachePath: string = '';
@@ -180,6 +188,7 @@ struct Index {
   @State showNotification: boolean = false;
   /** 界面缩放 0.8–1.4（对应桌面版三处 zoom） */
   @State uiScale: number = 1;
+  @State coverFill: boolean = false;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -351,6 +360,7 @@ struct Index {
       this.subtitleWeight = store.getSync('subtitleWeight', 400) as number;
       this.showNotification = store.getSync('showNotification', false) as boolean;
       this.uiScale = store.getSync('uiScale', 1) as number;
+      this.coverFill = store.getSync('coverFill', false) as boolean;
       this.showSecondary = store.getSync('showSecondary', true) as boolean;
       this.autoNext = store.getSync('autoNext', true) as boolean;
       this.volume = store.getSync('volume', 1) as number;
@@ -378,6 +388,7 @@ struct Index {
       store.putSync('subtitleWeight', this.subtitleWeight);
       store.putSync('showNotification', this.showNotification);
       store.putSync('uiScale', this.uiScale);
+      store.putSync('coverFill', this.coverFill);
       store.putSync('showSecondary', this.showSecondary);
       store.putSync('autoNext', this.autoNext);
       store.putSync('volume', this.volume);
@@ -1309,7 +1320,7 @@ struct Index {
               Image(this.coverFor(this.selectedBook.coverPath))
                 .width(36)
                 .height(44)
-                .objectFit(ImageFit.Cover)
+                .objectFit(this.coverFill ? ImageFit.Cover : ImageFit.Contain)
                 .borderRadius(4)
             }
 
@@ -1375,7 +1386,7 @@ struct Index {
                     Image(this.coverFor(book.coverPath))
                       .width('100%')
                       .aspectRatio(0.83)
-                      .objectFit(ImageFit.Cover)
+                      .objectFit(this.coverFill ? ImageFit.Cover : ImageFit.Contain)
                       .borderRadius(6)
                   } else {
                     Column() {
@@ -1468,7 +1479,7 @@ struct Index {
         Image(this.coverFor(this.selectedBook.coverPath))
           .width(150 * this.uiScale)
           .aspectRatio(0.83)
-          .objectFit(ImageFit.Cover)
+          .objectFit(this.coverFill ? ImageFit.Cover : ImageFit.Contain)
           .borderRadius(8)
           .margin({ top: 8 })
       } else {
@@ -2039,6 +2050,42 @@ struct Index {
         this.SectionTitle('播放')
 
         Row() {
+          Text('封面裁切填充（关 = 完整显示，不裁左右）')
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.coverFill })
+            .selectedColor(this.theme.accent)
+            .onChange((isOn: boolean) => {
+              this.coverFill = isOn;
+              this.saveSettings();
+            })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Row() {
+          Text('通知栏/锁屏显示字幕')
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.showNotification })
+            .selectedColor(this.theme.accent)
+            .onChange((isOn: boolean) => {
+              this.showNotification = isOn;
+              this.saveSettings();
+              if (isOn) {
+                const notifContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
+                this.nowPlaying.ensurePermission(notifContext);
+              } else {
+                this.nowPlaying.cancel();
+              }
+            })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
+
+        Row() {
           Text('双语对照')
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
@@ -2219,6 +2266,7 @@ struct Index {
     this.embeddedIndex = -1;
     hilog.info(0x0000, Index.TAG, 'embedded chapters: %{public}d', this.embeddedChapters.length);
 
+    this.m4bFallbackDone = false;
     const resumeAt = this.loadProgress(chapter);
 
     try {
@@ -2281,7 +2329,32 @@ struct Index {
       hilog.info(0x0000, Index.TAG, 'open audio: %{public}s (%{public}d bytes)',
         chapter.audioPath, stat.size);
 
-      player.fdSrc = { fd: file.fd, offset: 0, length: stat.size };
+      if (chapter.audioPath.toLowerCase().endsWith('.m4b')) {
+        // 保留 .m4b 原名：AVPlayer 按扩展名不认它，只能用数据源喂字节流。
+        // 关键是把 descriptor 挂到字段上长期持有，否则 GC 后原生回调会崩（cppcrash）。
+        const fd = file.fd;
+        const descriptor: media.AVDataSrcDescriptor = {
+          fileSize: stat.size,
+          callback: (buffer: ArrayBuffer, length: number, pos?: number): number => {
+            const offset = pos === undefined ? 0 : pos;
+            try {
+              return fileIo.readSync(fd, buffer, { offset: offset, length: length });
+            } catch (readError) {
+              return -2;
+            }
+          }
+        };
+        this.keepAliveDataSource = descriptor;
+        const source = media.createMediaSourceWithDataSource(descriptor);
+        if (source === undefined) {
+          this.statusText = '无法创建音频数据源（.m4b）';
+          return;
+        }
+        hilog.info(0x0000, Index.TAG, 'open .m4b via data source: %{public}s', chapter.title);
+        await player.setMediaSource(source);
+      } else {
+        player.fdSrc = { fd: file.fd, offset: 0, length: stat.size };
+      }
     } catch (error) {
       const err = error as BusinessError;
       this.statusText = `打开音频失败：${err.message}`;
@@ -2354,6 +2427,19 @@ struct Index {
       this.stopTicker();
       this.stopBackgroundPlayback();
       this.onChapterCompleted();
+    }
+  }
+
+  /** 把 .m4b 副本改名成 .m4a，返回新路径（失败返回空） */
+  private renameToM4a(path: string): string {
+    try {
+      const target = path.substring(0, path.length - 4) + '.m4a';
+      fileIo.renameSync(path, target);
+      hilog.info(0x0000, Index.TAG, 'renamed to .m4a: %{public}s', target);
+      return target;
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'rename to .m4a failed: %{public}s', JSON.stringify(error));
+      return '';
     }
   }
 
@@ -2571,9 +2657,13 @@ struct Index {
     try {
       player.off('stateChange');
       player.off('error');
+      player.off('timeUpdate');
       await player.release();
+      // release 完成后再丢数据源引用，避免原生还在回调时 JS 句柄消失（cppcrash）
+      this.keepAliveDataSource = null;
     } catch (error) {
       hilog.warn(0x0000, Index.TAG, 'release failed: %{public}s', JSON.stringify(error));
+      this.keepAliveDataSource = null;
     }
   }
 
