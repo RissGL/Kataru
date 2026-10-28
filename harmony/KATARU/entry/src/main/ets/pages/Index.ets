@@ -300,6 +300,10 @@ struct Index {
   @State showCardProgress: boolean = true;
   /** 阅读页独立字号（默认跟字幕字号分开调） */
   @State readingFontSize: number = 16;
+  /** 阅读页译文（双语小字）字号 */
+  @State readingSecondarySize: number = 13;
+  /** 首页「继续收听」卡片是否显示 */
+  @State showResumeCard: boolean = true;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -685,6 +689,8 @@ struct Index {
       this.readingLineHeight = store.getSync('readingLineHeight', 24) as number;
       this.readingParagraphGap = store.getSync('readingParagraphGap', 4) as number;
       this.readingFontSize = store.getSync('readingFontSize', 16) as number;
+      this.readingSecondarySize = store.getSync('readingSecondarySize', 13) as number;
+      this.showResumeCard = store.getSync('showResumeCard', true) as boolean;
       this.libraryColumns = store.getSync('libraryColumns', 3) as number;
       this.bookRadius = store.getSync('bookRadius', 6) as number;
       this.showCardProgress = store.getSync('showCardProgress', true) as boolean;
@@ -746,6 +752,8 @@ struct Index {
       store.putSync('readingLineHeight', this.readingLineHeight);
       store.putSync('readingParagraphGap', this.readingParagraphGap);
       store.putSync('readingFontSize', this.readingFontSize);
+      store.putSync('readingSecondarySize', this.readingSecondarySize);
+      store.putSync('showResumeCard', this.showResumeCard);
       store.putSync('libraryColumns', this.libraryColumns);
       store.putSync('bookRadius', this.bookRadius);
       store.putSync('showCardProgress', this.showCardProgress);
@@ -1730,7 +1738,7 @@ struct Index {
         .layoutWeight(1)
       } else {
         // 继续收听（桌面版 ContinueCommand 的等价物）
-        if (this.selectedBook !== null && this.selectedChapter !== null) {
+        if (this.showResumeCard && this.selectedBook !== null && this.selectedChapter !== null) {
           Row() {
             if (this.coverFor(this.selectedBook.coverPath) !== undefined) {
               Image(this.coverFor(this.selectedBook.coverPath))
@@ -2202,7 +2210,7 @@ struct Index {
                   // 双语：这一条对应的译文
                   if (this.showSecondary && this.secondaryLines.length > 0) {
                     Text(this.secondaryTextAt(line.startMs))
-                      .fontSize(13 * this.uiScale)
+                      .fontSize(this.readingSecondarySize * this.uiScale)
                       .fontFamily(this.uiFont())
                       .lineHeight(19 * this.uiScale)
                       .width('100%')
@@ -2471,6 +2479,45 @@ struct Index {
             this.readingFontSize = value;
             this.saveSettingsSoon();
           })
+
+        Row() {
+          Text('阅读页译文字号')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Text(`${Math.round(this.readingSecondarySize)}`)
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textSecondary)
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .padding({ top: 4 })
+
+        Slider({ value: this.readingSecondarySize, min: 10, max: 24, step: 1 })
+          .width('100%')
+          .selectedColor(this.theme.accent)
+          .onChange((value: number) => {
+            this.readingSecondarySize = value;
+            this.saveSettingsSoon();
+          })
+
+        Row() {
+          Text('首页显示「继续收听」')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.showResumeCard })
+            .selectedColor(this.theme.accent)
+            .onChange((isOn: boolean) => {
+              this.showResumeCard = isOn;
+              this.saveSettings();
+            })
+        }
+        .width('100%')
+        .padding({ top: 8, bottom: 4 })
 
         Row() {
           Text('每行书数')
