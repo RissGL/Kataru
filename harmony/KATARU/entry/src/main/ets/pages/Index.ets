@@ -2308,8 +2308,22 @@ struct Index {
         try {
           this.isPlaying = false;
           this.stopTicker();
-          this.statusText = '播放失败：' + error.message;
           hilog.error(0x0000, Index.TAG, 'player error: %{public}s', JSON.stringify(error));
+
+          // .m4b 走数据源如果被系统拒绝，自动改名成 .m4a 再试一次
+          //（保留 m4b 与"一定能播"两个目标都满足，且只降级一次）
+          if (chapter.audioPath.toLowerCase().endsWith('.m4b') && !this.m4bFallbackDone) {
+            this.m4bFallbackDone = true;
+            const renamed = this.renameToM4a(chapter.audioPath);
+            if (renamed.length > 0) {
+              chapter.audioPath = renamed;
+              this.statusText = '播放器不认这个 .m4b，已自动用 .m4a 副本重试';
+              this.openChapter(chapter, true);
+              return;
+            }
+          }
+
+          this.statusText = '播放失败：' + error.message;
         } catch (handlerError) {
           hilog.error(0x0000, Index.TAG, 'error handler failed: %{public}s',
             JSON.stringify(handlerError));
