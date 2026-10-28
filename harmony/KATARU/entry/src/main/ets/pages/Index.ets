@@ -573,6 +573,34 @@ struct Index {
     }
   }
 
+  /** 切到某个预设主题（同时清掉自定义覆盖） */
+  private applyThemePreset(index: number): void {
+    if (index < 0 || index >= THEME_PRESETS.length) {
+      return;
+    }
+    this.themeIndex = index;
+    this.theme = THEME_PRESETS[index].colors;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    ThemeStore.save(context, index);
+    this.clearCustomTheme();
+  }
+
+  /**
+   * 背景与主题的对比度联动：
+   * 选浅色渐变（暖纸）时自动换浅色主题，选深色渐变时换回深色主题，
+   * 否则白字压在米色背景上根本看不清。
+   */
+  private syncThemeWithBackground(gradientIndex: number): void {
+    const LIGHT_GRADIENT = 1;   // 暖纸
+    if (gradientIndex === LIGHT_GRADIENT && this.themeIndex === 0) {
+      this.applyThemePreset(1);
+      this.statusText = '已切换到浅色主题，保证文字可读';
+    } else if (gradientIndex >= 0 && gradientIndex !== LIGHT_GRADIENT && this.themeIndex === 1) {
+      this.applyThemePreset(0);
+      this.statusText = '已切换到深色主题';
+    }
+  }
+
   /** 恢复默认配色（清除自定义并回到墨黑） */
   private resetThemeToDefault(): void {
     this.clearCustomTheme();
@@ -653,6 +681,14 @@ struct Index {
       this.backgroundGradient = store.getSync('backgroundGradient', -1) as number;
       if (this.backgroundPath.length > 0) {
         this.loadBackgroundPixel();
+      }
+      // 启动时校正一次对比度：浅色渐变配深色主题会看不清
+      if (this.backgroundPath.length === 0) {
+        if (this.backgroundGradient === 1 && this.themeIndex === 0) {
+          this.applyThemePreset(1);
+        } else if (this.backgroundGradient >= 0 && this.backgroundGradient !== 1 && this.themeIndex === 1) {
+          this.applyThemePreset(0);
+        }
       }
       this.showSecondary = store.getSync('showSecondary', true) as boolean;
       this.autoNext = store.getSync('autoNext', true) as boolean;
@@ -1549,6 +1585,13 @@ struct Index {
             ]
           })
       }
+        // 渐变上再压一层主题底色：浅色渐变配深色文本、深色渐变配浅色文本都能看清
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor(this.theme.pageBackground)
+          .opacity(0.45)
+
 
       // 自定义背景图：铺满 + 模糊，再盖一层黑色压暗，保证文字清晰
       if (this.backgroundPixel !== null) {
@@ -2173,6 +2216,17 @@ struct Index {
         // 阅读页的播放控制条（边看边听，不用切回播放页）
         Row() {
           Row() {
+            Image($r('app.media.ic_target'))
+              .width(20)
+              .height(20)
+              .fillColor(this.currentIndex >= 0 ? this.theme.gold : this.theme.textSecondary)
+          }
+          .width(40)
+          .height(44)
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => this.jumpToCurrentLine())
+
+          Row() {
             Image($r('app.media.ic_prev'))
               .width(22)
               .height(22)
@@ -2315,6 +2369,7 @@ struct Index {
               if (this.backgroundPath.length > 0) {
                 this.clearBackgroundImage();
               }
+              this.syncThemeWithBackground(index);
               this.saveSettings();
             })
           }, (gradient: BackgroundGradient) => gradient.name)
@@ -3452,6 +3507,15 @@ struct Index {
       this.isPlaying = true;
       this.startTicker();
     }
+  }
+
+  /** 阅读页回到当前正在播的那一句 */
+  private jumpToCurrentLine(): void {
+    if (this.currentIndex < 0 || this.currentIndex >= this.lines.length) {
+      this.statusText = '还没开始播放，没有可跳的位置';
+      return;
+    }
+    this.readingScroller.scrollToIndex(this.currentIndex, false, ScrollAlign.CENTER);
   }
 
   private skip(deltaMs: number): void {
