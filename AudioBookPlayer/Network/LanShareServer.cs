@@ -49,7 +49,7 @@ public sealed class LanShareServer : IDisposable
     private CancellationTokenSource? _cts;
     private readonly object _gate = new();
 
-    public int Port { get; }
+    public int Port { get; private set; }
     public bool IsRunning
     {
         get { lock (_gate) { return _listener != null; } }
@@ -92,15 +92,35 @@ public sealed class LanShareServer : IDisposable
         }
     }
 
+    /// <summary>启动监听；端口被占（比如另开了一个服务）就往后找一个空闲端口。</summary>
     public void Start()
     {
         lock (_gate)
         {
             if (_listener != null) return;
-            _cts = new CancellationTokenSource();
-            _listener = new TcpListener(IPAddress.Any, Port);
-            _listener.Start();
-            _ = Task.Run(() => AcceptLoopAsync(_listener!, _cts.Token));
+
+            Exception? last = null;
+            for (var offset = 0; offset < 10; offset++)
+            {
+                var port = Port + offset;
+                try
+                {
+                    var listener = new TcpListener(IPAddress.Any, port);
+                    listener.Start();
+                    _listener = listener;
+                    Port = port;
+                    _cts = new CancellationTokenSource();
+                    _ = Task.Run(() => AcceptLoopAsync(listener, _cts.Token));
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    last = ex;
+                }
+            }
+
+            throw new InvalidOperationException(
+                $"端口 {Port}~{Port + 9} 都被占用，换一个端口或先关掉占用的程序", last);
         }
     }
 
@@ -228,7 +248,9 @@ public sealed class LanShareServer : IDisposable
                     index = ci,
                     title = c.Title,
                     size = c.Size,
-                    hasSubtitle = c.HasSubtitle
+                    hasSubtitle = c.HasSubtitle,
+                    audioName = c.AudioName,
+                    subtitleName = c.SubtitleName
                 })
             })
         };

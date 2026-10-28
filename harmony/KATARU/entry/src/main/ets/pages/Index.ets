@@ -349,6 +349,9 @@ struct Index {
   @State shareStatus: string = '';
   @State shareBooks: RemoteBook[] = [];
   @State shareBusy: boolean = false;
+  /** 内部自检开关（仅在开发调试时打开）：启动后自动连接共享服务 */
+  private shareAutoTest: boolean = false;
+  private shareAutoDownloadIndex: number = -1;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -372,6 +375,13 @@ struct Index {
     // 打开本地书库（App 私有目录）：不依赖任何权限，重启/重装都不会丢。
     // 「书库文件夹」只是同步源，书架空的时候选一次即可。
     this.openLocalLibrary();
+
+    // 内部自检：开发时用偏好文件打开，验证「连电脑 → 下载 → 刷新书架」整条链路
+    if (this.shareAutoTest) {
+      setTimeout(() => {
+        this.runShareSelfTest();
+      }, 1500);
+    }
 
     // 实况窗：先准备 clickAction（liveView 必填），再探测能力
     const uiContext = this.getUIContext().getHostContext() as common.UIAbilityContext;
@@ -736,6 +746,9 @@ struct Index {
       this.readingFontSize = store.getSync('readingFontSize', 16) as number;
       this.readingSecondarySize = store.getSync('readingSecondarySize', 13) as number;
       this.showResumeCard = store.getSync('showResumeCard', true) as boolean;
+      this.shareUrl = store.getSync('shareUrl', 'http://192.168.43.1:8765') as string;
+      this.shareAutoTest = store.getSync('shareAutoTest', false) as boolean;
+      this.shareAutoDownloadIndex = store.getSync('shareAutoDownload', -1) as number;
       this.libraryColumns = store.getSync('libraryColumns', 3) as number;
       this.bookRadius = store.getSync('bookRadius', 6) as number;
       this.showCardProgress = store.getSync('showCardProgress', true) as boolean;
@@ -799,6 +812,7 @@ struct Index {
       store.putSync('readingFontSize', this.readingFontSize);
       store.putSync('readingSecondarySize', this.readingSecondarySize);
       store.putSync('showResumeCard', this.showResumeCard);
+      store.putSync('shareUrl', this.shareUrl);
       store.putSync('libraryColumns', this.libraryColumns);
       store.putSync('bookRadius', this.bookRadius);
       store.putSync('showCardProgress', this.showCardProgress);
@@ -3813,6 +3827,23 @@ struct Index {
     return hsl.l > 60 ? '#14000000' : '#22C9A227';
   }
 
+  /** 内部自检：连接 + 可选自动下载一本书（只给开发调试用） */
+  private async runShareSelfTest(): Promise<void> {
+    hilog.info(0x0000, Index.TAG, 'share self-test: url=%{public}s', this.shareUrl);
+    await this.connectShareServer();
+    hilog.info(0x0000, Index.TAG, 'share self-test: status=%{public}s books=%{public}d',
+      this.shareStatus, this.shareBooks.length);
+
+    if (this.shareAutoDownloadIndex >= 0 && this.shareBooks.length > 0) {
+      const target = this.shareBooks[this.shareAutoDownloadIndex];
+      if (target !== undefined) {
+        hilog.info(0x0000, Index.TAG, 'share self-test: downloading %{public}s', target.title);
+        await this.downloadRemoteBook(target);
+        hilog.info(0x0000, Index.TAG, 'share self-test: done status=%{public}s', this.shareStatus);
+      }
+    }
+  }
+
   /** 连电脑的共享服务，取回书单 */
   private async connectShareServer(): Promise<void> {
     const base = this.shareUrl.trim().replace(/\/+$/, '');
@@ -3876,7 +3907,13 @@ struct Index {
       const chapters = await this.fetchRemoteChapters(base, book.index);
       let done = 0;
       for (const chapter of chapters) {
-        const audioTarget = bookDir + '/' + chapter.audioName;
+        // 电脑端没给文件名时兜底，避免落盘成 "undefined"
+        let fileName: string = chapter.audioName;
+        if (fileName === undefined || fileName === null || fileName.length === 0) {
+          fileName = book.title + ' - ' + (chapter.index + 1) + '.m4b';
+        }
+        fileName = fileName.replace(/[\/\\:*?"<>|]/g, '_');
+        const audioTarget = bookDir + '/' + fileName;
         await this.downloadTo(base, `/api/file?book=${book.index}&chapter=${chapter.index}&kind=audio`, audioTarget);
         done++;
         this.shareStatus = `《${book.title}》 ${done}/${chapters.length} 章`;
