@@ -622,6 +622,58 @@ struct Index {
     }
   }
 
+  /**
+   * 把沙箱里旧的 `.m4b` 副本改名成 `.m4a`。
+   *
+   * AVPlayer 按扩展名认格式，不认 .m4b；这些副本是 App 自己复制进来的，
+   * 改名安全（用户的原文件在 Download 里完全不动）。
+   */
+  private migrateM4bCopies(root: string): void {
+    let renamed = 0;
+    try {
+      const bookDirs = fileIo.listFileSync(root);
+      for (const bookDir of bookDirs) {
+        const dirPath = root + '/' + bookDir;
+        let isDir = false;
+        try {
+          isDir = fileIo.statSync(dirPath).isDirectory();
+        } catch (error) {
+          isDir = false;
+        }
+        if (!isDir) {
+          continue;
+        }
+
+        let files: string[] = [];
+        try {
+          files = fileIo.listFileSync(dirPath);
+        } catch (error) {
+          continue;
+        }
+
+        for (const file of files) {
+          if (!file.toLowerCase().endsWith('.m4b')) {
+            continue;
+          }
+          const from = dirPath + '/' + file;
+          const to = dirPath + '/' + file.substring(0, file.length - 4) + '.m4a';
+          try {
+            fileIo.renameSync(from, to);
+            renamed++;
+          } catch (error) {
+            hilog.warn(0x0000, Index.TAG, 'rename m4b failed: %{public}s', JSON.stringify(error));
+          }
+        }
+      }
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'migrate m4b failed: %{public}s', JSON.stringify(error));
+    }
+
+    if (renamed > 0) {
+      hilog.info(0x0000, Index.TAG, 'migrated %{public}d .m4b -> .m4a', renamed);
+    }
+  }
+
   // ==================== 书库同步（文件夹 → App 自己的目录） ====================
 
   /**
