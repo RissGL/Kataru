@@ -173,6 +173,8 @@ struct Index {
   private chapterOpenSeq: number = 0;
   /** seek 去抖：连点进度条/章节胶囊不再连发 */
   private seekLockUntil: number = 0;
+  /** 设置落盘去抖：拖滑杆时不要每次 flush 到磁盘 */
+  private saveSettingsTimer: number = -1;
   /** m4b 章节表缓存（同一份文件切章不必重复读 8MB moov） */
   private chapterCachePath: string = '';
   private chapterCacheMarks: AudioChapterMark[] = [];
@@ -512,6 +514,17 @@ struct Index {
     } catch (error) {
       hilog.warn(0x0000, Index.TAG, 'load settings failed: %{public}s', JSON.stringify(error));
     }
+  }
+
+  /** 去抖保存：拖动滑杆连续触发，停手 400ms 后真正写盘 */
+  private saveSettingsSoon(): void {
+    if (this.saveSettingsTimer >= 0) {
+      clearTimeout(this.saveSettingsTimer);
+    }
+    this.saveSettingsTimer = setTimeout(() => {
+      this.saveSettingsTimer = -1;
+      this.saveSettings();
+    }, 400);
   }
 
   private saveSettings(): void {
@@ -1813,7 +1826,7 @@ struct Index {
           .selectedColor(this.theme.gold)
           .onChange((value: number) => {
             this.volume = value / 100;
-            this.saveSettings();
+            this.saveSettingsSoon();
             if (this.player !== null) {
               this.player.setVolume(this.volume);
             }
@@ -2170,7 +2183,10 @@ struct Index {
               val: this.pickV,
               labelColor: this.theme.textPrimary,
               frameColor: this.theme.borderSoft,
-              onPick: (h: number, s: number, v: number) => {
+              onPick: (h: number, s: number, v: number, done: boolean) => {
+                if (!done) {
+                  return;
+                }
                 this.pickH = h;
                 this.pickS = s;
                 this.pickV = v;
@@ -2219,7 +2235,7 @@ struct Index {
           .selectedColor(this.theme.accent)
           .onChange((value: number) => {
             this.fontSize = value;
-            this.saveSettings();
+            this.saveSettingsSoon();
           })
 
         Text('字体')
