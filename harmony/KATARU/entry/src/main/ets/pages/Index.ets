@@ -3119,7 +3119,48 @@ struct Index {
         }
 
         if (this.settingsGroup === 3) {
+        this.SectionTitle('书库管理')
+
+        Text('删掉手机里的副本，不影响电脑上的原文件')
+          .fontFamily(this.uiFont())
+          .fontSize(11)
+          .fontColor(this.theme.textSecondary)
+          .margin({ bottom: 4 })
+
+        ForEach(this.books, (book: Book) => {
+          Row() {
+            Column() {
+              Text(book.title)
+                .fontFamily(this.uiFont())
+                .fontSize(13)
+                .fontColor(this.theme.textPrimary)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(this.bookSizeText(book))
+                .fontFamily(this.uiFont())
+                .fontSize(11)
+                .fontColor(this.theme.textSecondary)
+                .margin({ top: 2 })
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Button('删除')
+              .height(30)
+              .width(60)
+              .fontSize(12)
+              .backgroundColor(this.theme.panelBackground)
+              .fontColor('#E05A47')
+              .onClick(() => this.deleteBook(book))
+          }
+          .width('100%')
+          .padding({ top: 6, bottom: 6 })
+          .border({ width: { bottom: 0.5 }, color: this.theme.borderSoft })
+        }, (book: Book) => book.folderPath)
+
+        Blank().height(6)
         this.SectionTitle('局域网拉书')
+
 
         Text('电脑上点「启动共享」，把显示的地址填这里（同一 Wi-Fi 或电脑连手机热点）')
           .fontFamily(this.uiFont())
@@ -3199,10 +3240,8 @@ struct Index {
         }, (book: RemoteBook) => book.index.toString())
 
         Blank().height(6)
-        this.SectionTitle('媒体库')
 
         this.SectionTitle('媒体库')
-
         Row() {
           Text('书本存放位置')
           .fontFamily(this.uiFont())
@@ -3910,6 +3949,79 @@ struct Index {
         hilog.info(0x0000, Index.TAG, 'share self-test: done status=%{public}s', this.shareStatus);
       }
     }
+  }
+
+  /** 书目录占多少空间（给「书库管理」用） */
+  private bookSizeText(book: Book): string {
+    let total = 0;
+    try {
+      const files = fileIo.listFileSync(book.folderPath);
+      for (const name of files) {
+        try {
+          const stat = fileIo.statSync(book.folderPath + '/' + name);
+          if (!stat.isDirectory()) {
+            total += stat.size;
+          }
+        } catch (error) {
+          // 忽略单个文件失败
+        }
+      }
+    } catch (error) {
+      return '大小未知';
+    }
+    return book.chapters.length + ' 章 · ' + (total / 1048576).toFixed(1) + ' MB';
+  }
+
+  /** 删除一本书（把书目录整个删掉），然后刷新书架 */
+  private deleteBook(book: Book): void {
+    AlertDialog.show({
+      title: '删除这本书？',
+      message: `《${book.title}》\n会连同字幕、封面一起删掉，只影响手机里的副本。`,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: '#E05A47',
+        action: () => {
+          try {
+            if (fileIo.accessSync(book.folderPath)) {
+              fileIo.rmdirSync(book.folderPath);
+            }
+            hilog.info(0x0000, Index.TAG, 'book deleted: %{public}s', book.folderPath);
+            this.statusText = `已删除《${book.title}》`;
+            this.closePlayerIfCurrent(book);
+            this.refreshLibrary();
+          } catch (error) {
+            const err = error as BusinessError;
+            this.statusText = '删除失败：' + err.message;
+            hilog.error(0x0000, Index.TAG, 'delete book failed: %{public}s', JSON.stringify(error));
+          }
+        }
+      }
+    });
+  }
+
+  /** 删掉的正好是正在播的书 → 停掉播放并清空当前选择 */
+  private closePlayerIfCurrent(book: Book): void {
+    const current = this.selectedBook;
+    if (current === null || current.folderPath !== book.folderPath) {
+      return;
+    }
+    this.releasePlayer();
+    this.mediaSession.stop();
+    this.liveSubtitle.stop(this.selectedChapter === null ? '' : this.selectedChapter.title);
+    this.stopBackgroundPlayback();
+    this.selectedBook = null;
+    this.selectedChapter = null;
+    this.lines = [];
+    this.lineSource.setLines([]);
+    this.currentText = '';
+    this.secondaryText = '';
+    this.currentIndex = -1;
+    this.isPlaying = false;
   }
 
   /** 连电脑的共享服务，取回书单 */
