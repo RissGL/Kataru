@@ -2176,108 +2176,132 @@ struct Index {
       this.player = player;
 
       player.on('stateChange', (state: string) => {
-        hilog.info(0x0000, Index.TAG, 'state: %{public}s', state);
-        if (state === 'initialized') {
-          player.prepare();
-        } else if (state === 'prepared') {
-          this.durationMs = player.duration;
-          hilog.info(0x0000, Index.TAG, 'prepared: duration=%{public}d resumeAt=%{public}d',
-            this.durationMs, resumeAt);
-          this.saveDuration(chapter, this.durationMs);
-          if (resumeAt > 0 && resumeAt < this.durationMs - 3000) {
-            player.seek(resumeAt, media.SeekMode.SEEK_CLOSEST);
-            this.positionMs = resumeAt;
-            this.synchronizer.seek(resumeAt);
-            this.applyCurrentLine();
-          }
-          player.setVolume(this.volume);
-          // 点书即听；启动恢复上次位置时 autoPlay=false，避免一开 App 就出声
-          if (autoPlay) {
-            player.play();
-          }
-
-          // 接上系统播控：后台继续播放 + 锁屏/播控中心显示当前这句字幕
-          this.startMediaSession();
-          this.saveLastPlayed(chapter);
-
-          // 常驻通知（长时任务的必要配套 + 通知栏字幕）
-          this.setupNowPlayingNotification(chapter);
-
-          // 实况窗/灵动胶囊：在其他应用之上显示当前字幕
-          const liveBook = this.selectedBook;
-          if (liveBook !== null) {
-            this.liveSubtitle.start(liveBook.title, chapter.title, this.currentText);
-          }
-        } else if (state === 'playing') {
-          this.isPlaying = true;
-          this.startTicker();
-          // 申请音频播放长时任务，退到后台/锁屏不会被系统冻结
-          this.startBackgroundPlayback();
-        } else if (state === 'paused') {
-          this.isPlaying = false;
-          this.stopTicker();
-          this.saveProgress(false);
-          this.syncMediaSession(true);
-          this.stopBackgroundPlayback();
-        } else if (state === 'completed') {
-          this.isPlaying = false;
-          this.stopTicker();
-          this.stopBackgroundPlayback();
-          this.onChapterCompleted();
+        // 已被换掉/释放的播放器，忽略它的回调。
+        // 原生回调里抛未捕获异常会导致 cppcrash，所以整个函数体都包 try/catch。
+        if (player !== this.player) {
+          return;
+        }
+        try {
+          this.handlePlayerState(player, state, chapter, resumeAt, autoPlay);
+        } catch (handlerError) {
+          hilog.error(0x0000, Index.TAG, 'stateChange handler failed: %{public}s',
+            JSON.stringify(handlerError));
         }
       });
 
-      // 原生进度事件：后台也有效（JS 定时器在后台会被冻结）
       player.on('timeUpdate', (time: number) => {
-        this.onPlaybackTick(time);
+        if (player !== this.player) {
+          return;
+        }
+        try {
+          this.onPlaybackTick(time);
+        } catch (tickError) {
+          hilog.error(0x0000, Index.TAG, 'timeUpdate handler failed: %{public}s',
+            JSON.stringify(tickError));
+        }
       });
 
       player.on('error', (error: BusinessError) => {
-        this.isPlaying = false;
-        this.stopTicker();
-        this.statusText = `播放失败：${error.message}`;
-        hilog.error(0x0000, Index.TAG, 'player error: %{public}s', JSON.stringify(error));
+        if (player !== this.player) {
+          return;
+        }
+        try {
+          this.isPlaying = false;
+          this.stopTicker();
+          this.statusText = '播放失败：' + error.message;
+          hilog.error(0x0000, Index.TAG, 'player error: %{public}s', JSON.stringify(error));
+        } catch (handlerError) {
+          hilog.error(0x0000, Index.TAG, 'error handler failed: %{public}s',
+            JSON.stringify(handlerError));
+        }
       });
 
-      // 用数据源回调播放，而不是 fdSrc。
+      // 用官方的 fdSrc 打开音频（不涉及任何 JS 回调）。
       //
-      // 原因：AVPlayer 会按**扩展名**判断格式，.m4b 直接被拒（实测 5400106 不支持格式），
-      // 而 m4b 内容就是 MP4/AAC。走 AVDataSrcDescriptor 直接喂字节流，它就按内容解析，
-      // 既不用改用户文件的名字，也不用复制一份。
+      // 之前用 AVDataSrcDescriptor 的数据源回调，虽然能绕过 .m4b 扩展名限制，
+      // 但真机上会闪退：崩溃栈是
+      //   libmedia_avplayer → napi_call_function → panda::JSValueRef::IsFunction → SIGSEGV
+      // 也就是原生线程回调一个已经失效的 JS 函数句柄。10 次崩溃全是这个签名。
+      // 现在改成：同步时把 .m4b 落盘成 .m4a，播放走 fdSrc，彻底不碰 JS 回调。
       const file = fileIo.openSync(chapter.audioPath, fileIo.OpenMode.READ_ONLY);
       const stat = fileIo.statSync(file.fd);
       this.currentAudioFile = file;
       hilog.info(0x0000, Index.TAG, 'open audio: %{public}s (%{public}d bytes)',
         chapter.audioPath, stat.size);
 
-      const fd = file.fd;
-      const dataSrc: media.AVDataSrcDescriptor = {
-        fileSize: stat.size,
-        callback: (buffer: ArrayBuffer, length: number, pos?: number): number => {
-          const offset = pos === undefined ? 0 : pos;
-          try {
-            return fileIo.readSync(fd, buffer, { offset: offset, length: length });
-          } catch (readError) {
-            hilog.error(0x0000, Index.TAG, 'read audio failed: %{public}s',
-              JSON.stringify(readError));
-            return -2;
-          }
-        }
-      };
-
-      const mediaSource = media.createMediaSourceWithDataSource(dataSrc);
-      if (mediaSource === undefined) {
-        this.statusText = '无法创建音频数据源';
-        hilog.error(0x0000, Index.TAG, 'createMediaSourceWithDataSource returned undefined');
-        return;
-      }
-
-      hilog.info(0x0000, Index.TAG, 'setMediaSource(dataSrc) for %{public}s', chapter.title);
-      await player.setMediaSource(mediaSource);
+      player.fdSrc = { fd: file.fd, offset: 0, length: stat.size };
     } catch (error) {
       const err = error as BusinessError;
       this.statusText = `打开音频失败：${err.message}`;
       hilog.error(0x0000, Index.TAG, 'open failed: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  /** 播放器状态机（从 stateChange 回调里抽出来，便于统一 try/catch） */
+  private handlePlayerState(
+    player: media.AVPlayer,
+    state: string,
+    chapter: Chapter,
+    resumeAt: number,
+    autoPlay: boolean
+  ): void {
+    hilog.info(0x0000, Index.TAG, 'state: %{public}s', state);
+
+    if (state === 'initialized') {
+      player.prepare();
+      return;
+    }
+
+    if (state === 'prepared') {
+      this.durationMs = player.duration;
+      hilog.info(0x0000, Index.TAG, 'prepared: duration=%{public}d resumeAt=%{public}d',
+        this.durationMs, resumeAt);
+      this.saveDuration(chapter, this.durationMs);
+
+      if (resumeAt > 0 && resumeAt < this.durationMs - 3000) {
+        player.seek(resumeAt, media.SeekMode.SEEK_CLOSEST);
+        this.positionMs = resumeAt;
+        this.synchronizer.seek(resumeAt);
+        this.applyCurrentLine();
+      }
+
+      player.setVolume(this.volume);
+      if (autoPlay) {
+        player.play();
+      }
+
+      this.startMediaSession();
+      this.saveLastPlayed(chapter);
+      this.setupNowPlayingNotification(chapter);
+
+      const liveBook = this.selectedBook;
+      if (liveBook !== null) {
+        this.liveSubtitle.start(liveBook.title, chapter.title, this.currentText);
+      }
+      return;
+    }
+
+    if (state === 'playing') {
+      this.isPlaying = true;
+      this.startTicker();
+      this.startBackgroundPlayback();
+      return;
+    }
+
+    if (state === 'paused') {
+      this.isPlaying = false;
+      this.stopTicker();
+      this.saveProgress(false);
+      this.syncMediaSession(true);
+      this.stopBackgroundPlayback();
+      return;
+    }
+
+    if (state === 'completed') {
+      this.isPlaying = false;
+      this.stopTicker();
+      this.stopBackgroundPlayback();
+      this.onChapterCompleted();
     }
   }
 
