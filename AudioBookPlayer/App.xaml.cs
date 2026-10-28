@@ -141,7 +141,6 @@ namespace AudioBookPlayer
             {
                 try
                 {
-                    Console.WriteLine("progress raw(" + json.Length + "): " + json);
                     using var doc = System.Text.Json.JsonDocument.Parse(json);
                     var root = doc.RootElement;
                     if (!root.TryGetProperty("audioName", out var nameElement)) return false;
