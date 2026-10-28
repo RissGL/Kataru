@@ -68,6 +68,27 @@ class ThemeSlot {
   }
 }
 
+/** 内置背景渐变预设 */
+class BackgroundGradient {
+  name: string = '';
+  from: string = '';
+  to: string = '';
+
+  constructor(name: string, from: string, to: string) {
+    this.name = name;
+    this.from = from;
+    this.to = to;
+  }
+}
+
+const BACKGROUND_GRADIENTS: BackgroundGradient[] = [
+  new BackgroundGradient('深空', '#12141C', '#2A2233'),
+  new BackgroundGradient('暖纸', '#F3EBDD', '#D9C7A8'),
+  new BackgroundGradient('夜色', '#0B1020', '#1C3A5E'),
+  new BackgroundGradient('苔青', '#101A16', '#26463A'),
+  new BackgroundGradient('暗酒', '#1A1012', '#3E1C24'),
+];
+
 const THEME_SLOTS: ThemeSlot[] = [
   new ThemeSlot('bg', '背景'),
   new ThemeSlot('accent', '主色'),
@@ -267,6 +288,10 @@ struct Index {
   private sleepDeadline: number = 0;
   /** 阅读页行高 */
   @State readingLineHeight: number = 24;
+  /** 阅读页段间距 */
+  @State readingParagraphGap: number = 4;
+  /** 背景渐变预设下标（-1 = 不用渐变） */
+  @State backgroundGradient: number = -1;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -622,6 +647,8 @@ struct Index {
       this.backgroundDim = store.getSync('backgroundDim', 40) as number;
       this.backgroundBlur = store.getSync('backgroundBlur', 14) as number;
       this.readingLineHeight = store.getSync('readingLineHeight', 24) as number;
+      this.readingParagraphGap = store.getSync('readingParagraphGap', 4) as number;
+      this.backgroundGradient = store.getSync('backgroundGradient', -1) as number;
       if (this.backgroundPath.length > 0) {
         this.loadBackgroundPixel();
       }
@@ -669,6 +696,8 @@ struct Index {
       store.putSync('backgroundDim', this.backgroundDim);
       store.putSync('backgroundBlur', this.backgroundBlur);
       store.putSync('readingLineHeight', this.readingLineHeight);
+      store.putSync('readingParagraphGap', this.readingParagraphGap);
+      store.putSync('backgroundGradient', this.backgroundGradient);
       store.putSync('showSecondary', this.showSecondary);
       store.putSync('autoNext', this.autoNext);
       store.putSync('volume', this.volume);
@@ -1504,6 +1533,21 @@ struct Index {
 
   build() {
     Stack() {
+      // 内置渐变背景（没有自定义图时生效）
+      if (this.backgroundPixel === null && this.backgroundGradient >= 0 &&
+        this.backgroundGradient < BACKGROUND_GRADIENTS.length) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .linearGradient({
+            angle: 160,
+            colors: [
+              [BACKGROUND_GRADIENTS[this.backgroundGradient].from, 0],
+              [BACKGROUND_GRADIENTS[this.backgroundGradient].to, 1]
+            ]
+          })
+      }
+
       // 自定义背景图：铺满 + 模糊，再盖一层黑色压暗，保证文字清晰
       if (this.backgroundPixel !== null) {
         Image(this.backgroundPixel)
@@ -1576,7 +1620,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(this.backgroundPixel === null ? this.theme.pageBackground : Color.Transparent)
+    .backgroundColor(this.backgroundPixel === null && this.backgroundGradient < 0 ? this.theme.pageBackground : Color.Transparent)
     }
     .width('100%')
     .height('100%')
@@ -2075,7 +2119,7 @@ struct Index {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
-        List({ space: 4, scroller: this.readingScroller }) {
+        List({ space: this.readingParagraphGap, scroller: this.readingScroller }) {
           // 用 LazyForEach：这一章有 11444 条字幕，ForEach 会一次性建出全部
           // ListItem，直接卡死十几秒。LazyForEach 只建可见的几条。
           LazyForEach(this.lineSource, (line: SubtitleLine, index: number) => {
@@ -2227,6 +2271,68 @@ struct Index {
         }
         .width('100%')
         .margin({ top: 6 })
+
+        Text('内置渐变背景')
+          .fontFamily(this.uiFont())
+          .fontSize(12)
+          .fontColor(this.theme.textSecondary)
+          .margin({ top: 10, bottom: 4 })
+
+        Flex({ wrap: FlexWrap.Wrap }) {
+          ForEach(BACKGROUND_GRADIENTS, (gradient: BackgroundGradient, index: number) => {
+            Row() {
+              Column()
+                .width(24)
+                .height(24)
+                .borderRadius(6)
+                .linearGradient({
+                  angle: 160,
+                  colors: [[gradient.from, 0], [gradient.to, 1]]
+                })
+              Text(gradient.name)
+                .fontFamily(this.uiFont())
+                .fontSize(12)
+                .fontColor(this.theme.textPrimary)
+                .margin({ left: 6 })
+            }
+            .padding({ left: 8, right: 10, top: 5, bottom: 5 })
+            .margin({ right: 8, bottom: 8 })
+            .borderRadius(8)
+            .backgroundColor(this.theme.panelBackground)
+            .border({
+              width: this.backgroundGradient === index ? 2 : 1,
+              color: this.backgroundGradient === index ? this.theme.gold : this.theme.borderSoft
+            })
+            .onClick(() => {
+              // 选了渐变就撤掉自定义图，避免两个背景打架
+              this.backgroundGradient = index;
+              if (this.backgroundPath.length > 0) {
+                this.clearBackgroundImage();
+              }
+              this.saveSettings();
+            })
+          }, (gradient: BackgroundGradient) => gradient.name)
+
+          Row() {
+            Text('无渐变')
+              .fontFamily(this.uiFont())
+              .fontSize(12)
+              .fontColor(this.theme.textPrimary)
+          }
+          .padding({ left: 10, right: 10, top: 10, bottom: 10 })
+          .margin({ right: 8, bottom: 8 })
+          .borderRadius(8)
+          .backgroundColor(this.theme.panelBackground)
+          .border({
+            width: this.backgroundGradient < 0 ? 2 : 1,
+            color: this.backgroundGradient < 0 ? this.theme.gold : this.theme.borderSoft
+          })
+          .onClick(() => {
+            this.backgroundGradient = -1;
+            this.saveSettings();
+          })
+        }
+        .width('100%')
 
         if (this.backgroundPath.length > 0) {
           Row() {
@@ -2454,6 +2560,52 @@ struct Index {
           .selectedColor(this.theme.accent)
           .onChange((value: number) => {
             this.fontSize = value;
+            this.saveSettingsSoon();
+          })
+
+        Row() {
+          Text('行距')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Text(`${Math.round(this.readingLineHeight)}`)
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textSecondary)
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .padding({ top: 8 })
+
+        Slider({ value: this.readingLineHeight, min: 18, max: 44, step: 2 })
+          .width('100%')
+          .selectedColor(this.theme.accent)
+          .onChange((value: number) => {
+            this.readingLineHeight = value;
+            this.saveSettingsSoon();
+          })
+
+        Row() {
+          Text('段距')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Text(`${Math.round(this.readingParagraphGap)}`)
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textSecondary)
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .padding({ top: 8 })
+
+        Slider({ value: this.readingParagraphGap, min: 0, max: 20, step: 2 })
+          .width('100%')
+          .selectedColor(this.theme.accent)
+          .onChange((value: number) => {
+            this.readingParagraphGap = value;
             this.saveSettingsSoon();
           })
 
