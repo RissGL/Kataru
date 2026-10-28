@@ -378,6 +378,10 @@ struct Index {
   @State showResumeCard: boolean = true;
   /** 章节底部弹层是否展开 */
   @State showChapterSheet: boolean = false;
+  /** 下载 / 书库的存放目录（空 = App 内部目录） */
+  @State downloadDir: string = '';
+  /** 上次用过的电脑地址（点一下就能填回去） */
+  @State shareUrlHistory: string[] = [];
   /** 收听统计：{ "2026-10-28": 42 } 表示那天听了 42 分钟 */
   @State dailyStats: Record<string, number> = {};
   /** 今天的最长连续收听天数（展示用） */
@@ -796,6 +800,15 @@ struct Index {
       this.backgroundPath = store.getSync('backgroundPath', '') as string;
       this.backgroundDim = store.getSync('backgroundDim', 40) as number;
       this.backgroundBlur = store.getSync('backgroundBlur', 14) as number;
+      this.downloadDir = store.getSync('downloadDir', '') as string;
+      const historyRaw = store.getSync('shareUrlHistory', '') as string;
+      if (historyRaw.length > 0) {
+        try {
+          this.shareUrlHistory = JSON.parse(historyRaw) as string[];
+        } catch (error) {
+          this.shareUrlHistory = [];
+        }
+      }
       this.readingLineHeight = store.getSync('readingLineHeight', 24) as number;
       this.readingParagraphGap = store.getSync('readingParagraphGap', 4) as number;
       this.readingFontSize = store.getSync('readingFontSize', 16) as number;
@@ -1073,6 +1086,88 @@ struct Index {
     this.isPlaying = false;
   }
 
+
+  /** 记住上次用的电脑地址（最多 6 条，最近的在前） */
+  private rememberShareUrl(url: string): void {
+    const value = url.trim();
+    if (value.length === 0) {
+      return;
+    }
+    const next: string[] = [value];
+    for (const item of this.shareUrlHistory) {
+      if (item !== value && next.length < 6) {
+        next.push(item);
+      }
+    }
+    this.shareUrlHistory = next;
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync('shareUrlHistory', JSON.stringify(next));
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'save share history failed');
+    }
+  }
+
+  private saveDownloadDir(path: string): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync('downloadDir', path);
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'save download dir failed');
+    }
+  }
+
+  /**
+   * 选一个手机上的文件夹直接当书库（不复制进沙箱）：
+   * 书和下载都放这儿，文件管理器里能看到。
+   */
+  private async chooseDirectFolder(): Promise<void> {
+    try {
+      const options = new picker.DocumentSelectOptions();
+      options.maxSelectNumber = 1;
+      options.fileSuffixFilters = [];
+      const viewPicker = new picker.DocumentViewPicker();
+      const uris = await viewPicker.select(options);
+      if (uris.length === 0) {
+        this.statusText = '已取消选择文件夹';
+        return;
+      }
+
+      const uri = uris[0];
+      const resolved = this.resolveReadableDir(uri);
+      if (resolved.length === 0) {
+        this.statusText = '这个文件夹读不出来，换一个试试';
+        return;
+      }
+
+      try {
+        const policy: fileShare.PolicyInfo = {
+          uri: uri,
+          operationMode: (fileShare.OperationMode.READ_MODE | fileShare.OperationMode.WRITE_MODE)
+        };
+        await fileShare.persistPermission([policy]);
+      } catch (error) {
+        hilog.warn(0x0000, Index.TAG, 'persist write permission failed: %{public}s', JSON.stringify(error));
+      }
+
+      this.downloadDir = resolved;
+      this.saveDownloadDir(resolved);
+      this.libraryRoot = resolved;
+      this.saveRootPath(resolved);
+      this.needsReauth = false;
+      this.refreshLibrary();
+      this.statusText = `存放位置已改为：${resolved}`;
+      hilog.info(0x0000, Index.TAG, 'direct folder: %{public}s', resolved);
+    } catch (error) {
+      const err = error as BusinessError;
+      hilog.error(0x0000, Index.TAG, 'choose direct folder failed: code=%{public}d', err.code);
+      this.statusText = '选择失败：' + err.message;
+    }
+  }
 
   /** 记住真实路径（授权失效时还能用它做起始位置） */
   private saveRootPath(path: string): void {
@@ -1739,13 +1834,18 @@ struct Index {
           .objectFit(ImageFit.Cover)
           .blur(this.backgroundBlur)
 
+      }
+
+      // 压暗：所有背景通吃（渐变 / 自定义图都生效），0 = 不压
+      if (this.backgroundPixel !== null || this.backgroundGradient >= 0) {
         Column()
           .width('100%')
           .height('100%')
           .backgroundColor('#000000')
           .opacity(this.backgroundDim / 100)
+          .hitTestBehavior(HitTestMode.None)
       }
-
+      
     Column() {
       // 顶栏
       Row() {
@@ -2638,43 +2738,57 @@ struct Index {
         }
         .width('100%')
 
-        if (this.backgroundPath.length > 0) {
-          Row() {
-            Text('压暗')
-              .fontFamily(this.uiFont())
-              .fontSize(12)
-              .width(36)
-              .fontColor(this.theme.textSecondary)
-            Slider({ value: this.backgroundDim, min: 0, max: 85, step: 5 })
-              .layoutWeight(1)
-              .selectedColor(this.theme.gold)
-              .onChange((value: number) => {
-                this.backgroundDim = value;
-                this.saveSettingsSoon();
-              })
-          }
-          .width('100%')
-
-          Row() {
-            Text('模糊')
-              .fontFamily(this.uiFont())
-              .fontSize(12)
-              .width(36)
-              .fontColor(this.theme.textSecondary)
-            Slider({ value: this.backgroundBlur, min: 0, max: 40, step: 2 })
-              .layoutWeight(1)
-              .selectedColor(this.theme.gold)
-              .onChange((value: number, mode: SliderChangeMode) => {
-                if (mode === SliderChangeMode.Moving) {
-                  return;
-                }
-                this.backgroundBlur = value;
-                this.saveSettingsSoon();
-              })
-          }
-          .width('100%')
+        Row() {
+          Text('背景压暗')
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .width(64)
+            .fontColor(this.theme.textSecondary)
+          Slider({ value: this.backgroundDim, min: 0, max: 90, step: 5 })
+            .layoutWeight(1)
+            .selectedColor(this.theme.gold)
+            .onChange((value: number) => {
+              this.backgroundDim = value;
+              this.saveSettingsSoon();
+            })
+          Text(`${Math.round(this.backgroundDim)}%`)
+            .fontFamily(this.uiFont())
+            .fontSize(11)
+            .width(38)
+            .textAlign(TextAlign.End)
+            .fontColor(this.theme.textSecondary)
         }
+        .width('100%')
 
+        Row() {
+          Text('背景模糊')
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .width(64)
+            .fontColor(this.theme.textSecondary)
+          Slider({ value: this.backgroundBlur, min: 0, max: 40, step: 2 })
+            .layoutWeight(1)
+            .selectedColor(this.theme.gold)
+            .onChange((value: number) => {
+              this.backgroundBlur = value;
+              this.saveSettingsSoon();
+            })
+          Text(`${Math.round(this.backgroundBlur)}`)
+            .fontFamily(this.uiFont())
+            .fontSize(11)
+            .width(38)
+            .textAlign(TextAlign.End)
+            .fontColor(this.theme.textSecondary)
+        }
+        .width('100%')
+
+        Text(this.backgroundPath.length > 0 ? '模糊只对自定义背景图生效；压暗对渐变和图片都生效'
+          : '没设自定义背景图时模糊看不出效果，压暗可以直接调（背景会更暗）')
+          .fontFamily(this.uiFont())
+          .fontSize(10)
+          .fontColor(this.theme.textSecondary)
+          .width('100%')
+          .margin({ top: 2, bottom: 4 })
         Blank().height(6)
         this.SectionTitle('书架')
 
@@ -3429,6 +3543,57 @@ struct Index {
         this.SectionTitle('书库管理')
 
 
+        Row() {
+          Column() {
+            Text('下载 / 存放位置')
+              .fontFamily(this.uiFont())
+              .fontSize(12)
+              .fontColor(this.theme.textSecondary)
+            Text(this.downloadDir.length > 0 ? this.downloadDir : 'App 内部目录（手机文件管理里看不到）')
+              .fontFamily(this.uiFont())
+              .fontSize(11)
+              .fontColor(this.theme.gold)
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ top: 2 })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .padding({ top: 2, bottom: 6 })
+
+        Row() {
+          Button('选手机文件夹')
+            .height(34)
+            .fontSize(12)
+            .backgroundColor(this.theme.panelBackground)
+            .fontColor(this.theme.textPrimary)
+            .onClick(() => this.chooseDirectFolder())
+
+          Button('恢复内部目录')
+            .height(34)
+            .fontSize(12)
+            .margin({ left: 8 })
+            .backgroundColor(this.theme.panelBackground)
+            .fontColor(this.theme.textPrimary)
+            .onClick(() => {
+              this.downloadDir = '';
+              this.saveDownloadDir('');
+              this.openLocalLibrary();
+              this.statusText = '已切回 App 内部目录';
+            })
+        }
+        .width('100%')
+        .margin({ bottom: 8 })
+
+        Text('「选手机文件夹」= 直接把书库放在你能看到的目录（文件管理器里能看到，占手机存储）；不改就下载到 App 内部。')
+          .fontFamily(this.uiFont())
+          .fontSize(10)
+          .fontColor(this.theme.textSecondary)
+          .width('100%')
+          .margin({ bottom: 6 })
+
         Text('删掉手机里的副本，不影响电脑上的原文件')
           .fontFamily(this.uiFont())
           .fontSize(11)
@@ -3504,7 +3669,43 @@ struct Index {
             .enabled(!this.shareBusy)
             .onClick(() => this.connectShareServer())
         }
+
         .width('100%')
+
+        // 上次用过的地址：点一下直接填回去
+        if (this.shareUrlHistory.length > 0) {
+          Row() {
+            Text('上次用过')
+              .fontFamily(this.uiFont())
+              .fontSize(10)
+              .fontColor(this.theme.textSecondary)
+              .margin({ right: 6 })
+            Scroll() {
+              Row() {
+                ForEach(this.shareUrlHistory, (url: string) => {
+                  Text(url)
+                    .fontFamily(this.uiFont())
+                    .fontSize(10)
+                    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+                    .margin({ right: 6 })
+                    .borderRadius(10)
+                    .backgroundColor(this.shareUrl === url ? this.theme.accent : this.theme.panelBackground)
+                    .fontColor(this.shareUrl === url ? '#FFFFFF' : this.theme.textPrimary)
+                    .onClick(() => {
+                      this.shareUrl = url;
+                    })
+                }, (url: string) => url)
+              }
+            }
+            .scrollable(ScrollDirection.Horizontal)
+            .scrollBar(BarState.Off)
+            .layoutWeight(1)
+            .height(34)
+          }
+          .width('100%')
+          .height(34)
+          .margin({ top: 8 })
+        }
 
         if (this.shareStatus.length > 0) {
           Text(this.shareStatus)
@@ -4624,6 +4825,7 @@ struct Index {
       }
       this.shareBooks = books;
       this.shareStatus = `已连接，共 ${books.length} 本`;
+      this.rememberShareUrl(this.shareUrl);
       hilog.info(0x0000, Index.TAG, 'share: %{public}d books from %{public}s', books.length, base);
     } catch (error) {
       const err = error as BusinessError;
@@ -4644,7 +4846,9 @@ struct Index {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     // 下载到「当前书库目录」，也就是设置里显示的「App 内部目录」，
     // 和书架扫描用的是同一个根目录，拉完立刻能被扫到。
-    const root: string = this.libraryRoot.length > 0 ? this.libraryRoot : (context.filesDir + '/books');
+    // 下载到「存放位置」：设了自定义目录就用它，否则用书库目录
+    const fallback: string = this.libraryRoot.length > 0 ? this.libraryRoot : (context.filesDir + '/books');
+    const root: string = this.downloadDir.length > 0 ? this.downloadDir : fallback;
     if (!fileIo.accessSync(root)) {
       fileIo.mkdirSync(root, true);
     }
