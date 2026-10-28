@@ -2055,24 +2055,30 @@ struct Index {
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-      Text(this.currentText.length > 0 ? this.currentText : '（这里显示当前这句）')
-        .fontFamily(this.subtitleFamily())
-        .fontSize(this.fontSize)
-        .lineHeight(this.fontSize * 1.5)
-        .textAlign(TextAlign.Center)
-        .fontColor(this.currentText.length > 0 ? this.subtitleColor : this.theme.textSecondary)
-        .fontWeight(this.subtitleWeight)
-        // 描边：ArkUI 没有文字描边，用同色的零偏移阴影模拟（对应桌面版的 OutlineThickness）
-        .textShadow({
-          radius: this.subtitleOutlineWidth,
-          color: this.subtitleOutlineColor,
-          offsetX: 0,
-          offsetY: 0
-        })
-        .maxLines(4)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .padding({ left: 20, right: 20, top: 16 })
+      // 当前这句：没有字幕时完全留白（不再显示占位文字），
+      // 但保留这块高度，避免字幕出现/消失时整个播放页上下跳动。
+      if (this.currentText.length > 0) {
+        Text(this.currentText)
+          .fontFamily(this.subtitleFamily())
+          .fontSize(this.fontSize)
+          .lineHeight(this.fontSize * 1.5)
+          .textAlign(TextAlign.Center)
+          .fontColor(this.subtitleColor)
+          .fontWeight(this.subtitleWeight)
+          // 描边：ArkUI 没有文字描边，用同色的零偏移阴影模拟（对应桌面版的 OutlineThickness）
+          .textShadow({
+            radius: this.subtitleOutlineWidth,
+            color: this.subtitleOutlineColor,
+            offsetX: 0,
+            offsetY: 0
+          })
+          .maxLines(4)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+          .padding({ left: 20, right: 20, top: 16 })
+      } else {
+        Blank().height(this.fontSize * 1.5)
+      }
 
       // 双语：主字幕下面跟一行译文
       if (this.showSecondary && this.secondaryText.length > 0) {
