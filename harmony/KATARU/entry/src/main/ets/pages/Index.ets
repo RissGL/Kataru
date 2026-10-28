@@ -307,6 +307,29 @@ struct Index {
     }
   }
 
+  /** 清掉自定义配色覆盖 */
+  private clearCustomTheme(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+      store.putSync('custom_theme', '');
+      store.flush();
+      hilog.info(0x0000, Index.TAG, 'custom theme cleared');
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'clear custom theme failed: %{stringify}', JSON.stringify(error));
+    }
+  }
+
+  /** 恢复默认配色（清除自定义并回到墨黑） */
+  private resetThemeToDefault(): void {
+    this.clearCustomTheme();
+    this.themeIndex = 0;
+    this.theme = THEME_PRESETS[0].colors;
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    ThemeStore.save(context, 0);
+    this.statusText = '配色已恢复默认';
+  }
+
   /** 读回自定义主题（没有就用预设） */
   private loadCustomTheme(): boolean {
     try {
@@ -3048,6 +3071,7 @@ struct Index {
     this.skipSeconds = 10;
     this.themeIndex = 0;
     this.theme = THEME_PRESETS[0].colors;
+    this.clearCustomTheme();
     this.saveSettings();
     this.statusText = '已恢复默认设置';
   }
