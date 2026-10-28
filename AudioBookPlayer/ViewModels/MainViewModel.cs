@@ -1664,7 +1664,8 @@ namespace AudioBookPlayer.ViewModels
                 {
                     foreach (var entry in book.Entries)
                     {
-                        if (!string.Equals(Path.GetFileName(entry.AudioPath), audioName, StringComparison.OrdinalIgnoreCase))
+                        // 手机播放时会把 .m4b 改名成 .m4a，按主干名比
+                        if (!string.Equals(Path.GetFileNameWithoutExtension(entry.AudioPath), Path.GetFileNameWithoutExtension(audioName), StringComparison.OrdinalIgnoreCase))
                         {
                             continue;
                         }

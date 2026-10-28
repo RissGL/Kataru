@@ -154,7 +154,8 @@ namespace AudioBookPlayer
                     {
                         for (var i = 0; i < entry.AudioPaths.Count; i++)
                         {
-                            if (!string.Equals(Path.GetFileName(entry.AudioPaths[i]), audioName, StringComparison.OrdinalIgnoreCase))
+                            // 手机播放时会把 .m4b 改名成 .m4a，所以按"去扩展名的主干名"比，不能比完整文件名
+                            if (!string.Equals(Path.GetFileNameWithoutExtension(entry.AudioPaths[i]), Path.GetFileNameWithoutExtension(audioName), StringComparison.OrdinalIgnoreCase))
                             {
                                 continue;
                             }

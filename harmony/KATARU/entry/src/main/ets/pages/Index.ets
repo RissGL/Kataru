@@ -4340,28 +4340,28 @@ struct Index {
     }
 
     const audioName = chapter.audioPath.substring(chapter.audioPath.lastIndexOf('/') + 1);
-    const payload = JSON.stringify({
-      audioName: audioName,
-      positionSeconds: this.positionMs / 1000,
-      durationSeconds: this.durationMs / 1000
-    } as ProgressPayload);
+    // 用 GET + query：手机 HTTP 客户端对 POST 会先发 Expect: 100-continue，
+    // 我们那个裸 TCP 服务不会回 100，会一直等到超时。
+    const url = base + '/api/progress' +
+      '?audioName=' + encodeURIComponent(audioName) +
+      '&position=' + (this.positionMs / 1000).toFixed(2) +
+      '&duration=' + (this.durationMs / 1000).toFixed(2);
 
     try {
       const client = http.createHttp();
-      const response = await client.request(base + '/api/progress', {
-        method: http.RequestMethod.POST,
-        header: { 'Content-Type': 'application/json' },
-        extraData: payload,
+      const response = await client.request(url, {
+        method: http.RequestMethod.GET,
         connectTimeout: 5000,
         readTimeout: 5000
       });
       client.destroy();
-      if (response.responseCode === 200) {
-        hilog.info(0x0000, Index.TAG, 'progress pushed: %{public}s', audioName);
-      }
+      hilog.info(0x0000, Index.TAG, 'progress push: code=%{public}d %{public}s',
+        response.responseCode, audioName);
     } catch (error) {
-      // 电脑没开共享 / 不在同一网络：静默失败，不影响播放
-      hilog.debug(0x0000, Index.TAG, 'progress push skipped');
+      // 电脑没开共享 / 不在同一网络：不影响播放，只记一行便于排查
+      const err = error as BusinessError;
+      hilog.info(0x0000, Index.TAG, 'progress push failed: code=%{public}d msg=%{public}s',
+        err.code, err.message);
     }
   }
 

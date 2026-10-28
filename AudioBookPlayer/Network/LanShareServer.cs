@@ -212,9 +212,24 @@ public sealed class LanShareServer : IDisposable
                     return;
                 }
 
-                if (path == "/api/progress" && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+                if (path == "/api/progress")
                 {
-                    var accepted = ProgressReceiver?.Invoke(body) ?? false;
+                    // 两种写法都支持：
+                    //   POST + JSON body（curl 测试方便）
+                    //   GET + query（手机 HTTP 客户端对 POST 会发 Expect: 100-continue，裸服务不好伺候）
+                    var payload = body;
+                    if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) || !payload.StartsWith("{"))
+                    {
+                        var audioName = QueryValue(query, "audioName").Replace("\\", "\\\\").Replace("\"", "\\\"");
+                        var positionText = QueryValue(query, "position");
+                        var durationText = QueryValue(query, "duration");
+                        var positionValue = double.TryParse(positionText, out var posParsed) ? posParsed : 0;
+                        var durationValue = double.TryParse(durationText, out var durParsed) ? durParsed : 0;
+                        payload = "{\"audioName\":\"" + audioName + "\",\"positionSeconds\":" +
+                                  positionValue + ",\"durationSeconds\":" + durationValue + "}";
+                    }
+
+                    var accepted = ProgressReceiver?.Invoke(payload) ?? false;
                     await WriteTextAsync(stream, accepted ? 200 : 400, "application/json; charset=utf-8",
                         accepted ? "{\"ok\":true}" : "{\"ok\":false}").ConfigureAwait(false);
                     return;
