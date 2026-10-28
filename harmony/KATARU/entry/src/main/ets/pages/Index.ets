@@ -74,6 +74,51 @@ const THEME_SLOTS: ThemeSlot[] = [
   new ThemeSlot('outline', '描边色'),
 ];
 
+/** 阅读页的字幕列表数据源（LazyForEach 用，避免一次性创建上万条 ListItem） */
+class SubtitleDataSource implements IDataSource {
+  private lines: SubtitleLine[] = [];
+  private listeners: DataChangeListener[] = [];
+
+  totalCount(): number {
+    return this.lines.length;
+  }
+
+  getData(index: number): SubtitleLine {
+    return this.lines[index];
+  }
+
+  registerDataChangeListener(listener: DataChangeListener): void {
+    if (this.listeners.indexOf(listener) < 0) {
+      this.listeners.push(listener);
+    }
+  }
+
+  unregisterDataChangeListener(listener: DataChangeListener): void {
+    const index = this.listeners.indexOf(listener);
+    if (index >= 0) {
+      this.listeners.splice(index, 1);
+    }
+  }
+
+  /** 换字幕文件时整表刷新 */
+  setLines(lines: SubtitleLine[]): void {
+    this.lines = lines;
+    for (const listener of this.listeners) {
+      listener.onDataReloaded();
+    }
+  }
+
+  /** 高亮行变化时只刷新那两行 */
+  notifyChanged(index: number): void {
+    if (index < 0 || index >= this.lines.length) {
+      return;
+    }
+    for (const listener of this.listeners) {
+      listener.onDataChange(index);
+    }
+  }
+}
+
 /** 自定义主题（用户调过的配色，存 preferences） */
 class CustomTheme {
   pageBackground: string = '#121011';
@@ -110,6 +155,8 @@ struct Index {
   private secondarySynchronizer: SubtitleSynchronizer = new SubtitleSynchronizer();
   private tickTimer: number = -1;
   private readingScroller: Scroller = new Scroller();
+  /** 阅读页的大列表用 LazyForEach（否则 1 万条字幕会卡死） */
+  private lineSource: SubtitleDataSource = new SubtitleDataSource();
   private lastProgressSaveMs: number = 0;
   private currentAudioFile: fileIo.File | null = null;
   /**
@@ -1771,7 +1818,9 @@ struct Index {
         .justifyContent(FlexAlign.Center)
       } else {
         List({ space: 4, scroller: this.readingScroller }) {
-          ForEach(this.lines, (line: SubtitleLine, index: number) => {
+          // 用 LazyForEach：这一章有 11444 条字幕，ForEach 会一次性建出全部
+          // ListItem，直接卡死十几秒。LazyForEach 只建可见的几条。
+          LazyForEach(this.lineSource, (line: SubtitleLine, index: number) => {
             ListItem() {
               Row() {
                 Text(line.timeText())
@@ -2844,6 +2893,8 @@ struct Index {
 
       this.synchronizer.load(lines);
       this.lines = lines;
+      // LazyForEach 的数据源必须同步，否则阅读页是空的
+      this.lineSource.setLines(lines);
       this.currentIndex = -1;
       this.currentText = '';
 
@@ -2897,9 +2948,13 @@ struct Index {
 
     const index = this.synchronizer.currentIndex;
     if (this.currentIndex !== index) {
+      const previous = this.currentIndex;
       this.currentIndex = index;
       hilog.info(0x0000, Index.TAG, 'line -> %{public}d @ %{public}dms: %{public}s',
         index, this.positionMs, text.length > 40 ? text.substring(0, 40) : text);
+      // LazyForEach 不随状态自动重画：手动刷新旧行与新行
+      this.lineSource.notifyChanged(previous);
+      this.lineSource.notifyChanged(index);
       if (index >= 0) {
         this.readingScroller.scrollToIndex(index, true, ScrollAlign.CENTER);
       }

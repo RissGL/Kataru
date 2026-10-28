@@ -1,6 +1,7 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { util } from '@kit.ArkTS';
 
 /** 音频文件内部的一个章节标记 */
 export class AudioChapterMark {
@@ -222,15 +223,29 @@ export class Mp4Chapters {
     }
 
     hilog.info(0x0000, Mp4Chapters.TAG, 'chpl parsed: %{public}d chapter(s)', chapters.length);
+    if (chapters.length > 0) {
+      hilog.info(0x0000, Mp4Chapters.TAG, 'chpl first: [%{public}s] %{public}dms',
+        chapters[0].title, chapters[0].startMs);
+      const last = chapters[chapters.length - 1];
+      hilog.info(0x0000, Mp4Chapters.TAG, 'chpl last: [%{public}s] %{public}dms',
+        last.title, last.startMs);
+    }
     return chapters;
   }
 
+  /** 正确解码 UTF-8（chpl 的标题是 UTF-8，日文/中文都是多字节） */
   private static decodeUtf8(bytes: Uint8Array): string {
-    let out = '';
-    for (let i = 0; i < bytes.length; i++) {
-      out += String.fromCharCode(bytes[i]);
+    try {
+      const decoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
+      return decoder.decodeToString(bytes);
+    } catch (error) {
+      // 极端情况下退回逐字节（至少不崩）
+      let out = '';
+      for (let i = 0; i < bytes.length; i++) {
+        out += String.fromCharCode(bytes[i]);
+      }
+      return out;
     }
-    return out;
   }
 
   private static fourCc(buffer: ArrayBuffer, offset: number): string {
