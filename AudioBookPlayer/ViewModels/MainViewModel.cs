@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Threading;
+using AudioBookPlayer.Network;
 using AudioBookPlayer.Audio;
 using AudioBookPlayer.Core;
 using AudioBookPlayer.Windows;
@@ -130,6 +131,9 @@ namespace AudioBookPlayer.ViewModels
         private double _volume = 1.0;
         private double _skipSeconds = 10;
         private bool _disposed;
+        private LanShareServer? _lanShare;
+        private string _lanShareStatus = "未启动";
+        private string _lanShareUrls = "";
 
         public MainViewModel(Func<IAudioPlayer>? audioPlayerFactory = null, AppSettings? settings = null, PlaybackStore? playbackStore = null)
         {
@@ -150,6 +154,7 @@ namespace AudioBookPlayer.ViewModels
             BooksView = new ListCollectionView(Books) { CustomSort = new BookComparer() };
             BooksView.Filter = FilterBook;
 
+            ToggleLanShareCommand = new RelayCommand(ToggleLanShare);
             ChooseFolderCommand = new RelayCommand(() => _ = ChooseFolderAsync(), () => !IsScanning);
             RefreshLibraryCommand = new RelayCommand(() => _ = RescanAsync(), () => !IsScanning && !string.IsNullOrEmpty(LibraryRoot));
             SwitchModeCommand = new RelayCommand(parameter =>
@@ -464,6 +469,9 @@ namespace AudioBookPlayer.ViewModels
         public RelayCommand JumpChapterCommand { get; }
 
         public RelayCommand ResetThemeCommand { get; }
+
+        /// <summary>启动/停止局域网共享（手机拉取书库用）。</summary>
+        public RelayCommand ToggleLanShareCommand { get; } = null!;
 
         // ---------------- 配色方案 ----------------
 
@@ -1573,6 +1581,116 @@ namespace AudioBookPlayer.ViewModels
         }
 
         // ---------------- 扫描 ----------------
+
+        /// <summary>局域网共享状态（绑定到设置页的文案）。</summary>
+        public string LanShareStatus
+        {
+            get => _lanShareStatus;
+            private set
+            {
+                if (_lanShareStatus == value) return;
+                _lanShareStatus = value;
+                OnPropertyChanged(nameof(LanShareStatus));
+                OnPropertyChanged(nameof(LanShareButtonText));
+            }
+        }
+
+        public string LanShareUrls
+        {
+            get => _lanShareUrls;
+            private set
+            {
+                if (_lanShareUrls == value) return;
+                _lanShareUrls = value;
+                OnPropertyChanged(nameof(LanShareUrls));
+            }
+        }
+
+        public bool IsLanSharing => _lanShare != null;
+        public string LanShareButtonText => IsLanSharing ? "停止共享" : "启动共享";
+
+        /// <summary>启动/停止局域网共享。手机连同一个 Wi-Fi 或电脑连手机热点即可拉书。</summary>
+        private void ToggleLanShare()
+        {
+            if (_lanShare != null)
+            {
+                _lanShare.Dispose();
+                _lanShare = null;
+                LanShareStatus = "已停止";
+                LanShareUrls = "";
+                OnPropertyChanged(nameof(IsLanSharing));
+                OnPropertyChanged(nameof(LanShareButtonText));
+                return;
+            }
+
+            try
+            {
+                var server = new LanShareServer();
+                server.LibraryProvider = BuildShareEntries;
+                server.Start();
+                _lanShare = server;
+
+                var urls = server.Urls.Where(u => !u.Contains("127.0.0.1")).ToList();
+                LanShareUrls = urls.Count > 0 ? string.Join("  或  ", urls) : server.Urls[0];
+                LanShareStatus = $"共享中，共 {Books.Count} 本";
+                OnPropertyChanged(nameof(IsLanSharing));
+                OnPropertyChanged(nameof(LanShareButtonText));
+            }
+            catch (Exception ex)
+            {
+                LanShareStatus = "启动失败：" + ex.Message;
+            }
+        }
+
+        /// <summary>把当前书库映射成共享条目（每次请求现算，重扫后自动生效）。</summary>
+        private IReadOnlyList<LanShareServer.ShareBookEntry> BuildShareEntries()
+        {
+            var list = new List<LanShareServer.ShareBookEntry>();
+            foreach (var book in Books)
+            {
+                var chapters = new List<ShareChapter>();
+                var audioPaths = new List<string>();
+                var subtitlePaths = new List<string>();
+
+                foreach (var entry in book.Entries)
+                {
+                    long size = 0;
+                    try
+                    {
+                        var info = new FileInfo(entry.AudioPath);
+                        if (info.Exists) size = info.Length;
+                    }
+                    catch { }
+
+                    chapters.Add(new ShareChapter
+                    {
+                        Title = entry.Title,
+                        Size = size,
+                        HasSubtitle = entry.HasSubtitle,
+                        AudioName = Path.GetFileName(entry.AudioPath),
+                        SubtitleName = entry.HasSubtitle ? Path.GetFileName(entry.SubtitlePath!) : ""
+                    });
+                    audioPaths.Add(entry.AudioPath);
+                    subtitlePaths.Add(entry.HasSubtitle ? entry.SubtitlePath! : "");
+                }
+
+                list.Add(new LanShareServer.ShareBookEntry
+                {
+                    Info = new ShareBook
+                    {
+                        Title = book.Title,
+                        Folder = book.FolderPath,
+                        HasCover = !string.IsNullOrEmpty(book.CoverPath) && File.Exists(book.CoverPath),
+                        CoverName = string.IsNullOrEmpty(book.CoverPath) ? "" : Path.GetFileName(book.CoverPath),
+                        Chapters = chapters
+                    },
+                    AudioPaths = audioPaths,
+                    SubtitlePaths = subtitlePaths,
+                    CoverPath = book.CoverPath
+                });
+            }
+            return list;
+        }
 
         private async Task ChooseFolderAsync()
         {

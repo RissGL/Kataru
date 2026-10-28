@@ -594,6 +594,27 @@
 
                         <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
                             <StackPanel>
+                                <TextBlock Text="局域网传输（手机拉书）" Style="{StaticResource SettingsSectionStyle}" />
+                                <TextBlock Style="{StaticResource HintTextStyle}" TextWrapping="Wrap" Margin="0,0,0,10"
+                                           Text="电脑开这个共享，手机连同一个 Wi-Fi（或把电脑连到手机热点），在手机 App 里填下面这个地址就能直接下载整本书。不上公网，不经过任何服务器。" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="{Binding LanShareButtonText}" Padding="12,6" Margin="0,0,10,0"
+                                            Style="{StaticResource PrimaryButtonStyle}"
+                                            Command="{Binding ToggleLanShareCommand}" />
+                                    <TextBlock Text="{Binding LanShareStatus}" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextSecondaryBrush}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding LanShareUrls}" Margin="0,10,0,0" FontSize="13"
+                                           FontFamily="Consolas" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource AccentBrush}"
+                                           Visibility="{Binding IsLanSharing, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Style="{StaticResource HintTextStyle}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                           Text="如果手机连不上：确认两者在同一网段，并在 Windows 防火墙里允许本程序的「专用网络」入站。" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardBorderStyle}" Margin="0,12,0,0">
+                            <StackPanel>
                                 <TextBlock Text="播放与记忆" Style="{StaticResource SettingsSectionStyle}" />
 
                                 <Grid>

@@ -4,6 +4,10 @@ using AudioBookPlayer.Diagnostics;
 using AudioBookPlayer.ViewModels;
 using AudioBookPlayer.Views;
 using AudioBookPlayer.Windows;
+using System.Collections.Generic;
+using System.IO;
+using AudioBookPlayer.Core;
+using AudioBookPlayer.Network;
 
 namespace AudioBookPlayer
 {
@@ -39,6 +43,84 @@ namespace AudioBookPlayer
             _tray?.ShowMinimizedTip();
         }
 
+        /// <summary>无头运行：--serve [书库目录]，只把书库通过局域网共享出去。</summary>
+        private static void RunHeadlessServer(string[] args)
+        {
+            var settings = AppSettings.Load();
+            var root = args.Length > 1 && !string.IsNullOrWhiteSpace(args[1]) ? args[1] : settings.LibraryFolder;
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            {
+                Console.Error.WriteLine("书库目录不存在：" + root);
+                Environment.ExitCode = 2;
+                Application.Current.Shutdown(2);
+                return;
+            }
+
+            var result = MediaLibraryScanner.Scan(root);
+            var entries = new List<LanShareServer.ShareBookEntry>();
+            foreach (var book in result.Books)
+            {
+                var chapters = new List<ShareChapter>();
+                var audioPaths = new List<string>();
+                var subtitlePaths = new List<string>();
+                foreach (var entry in book.Entries)
+                {
+                    long size = 0;
+                    try
+                    {
+                        var info = new FileInfo(entry.AudioPath);
+                        if (info.Exists) size = info.Length;
+                    }
+                    catch { }
+
+                    chapters.Add(new ShareChapter
+                    {
+                        Title = entry.Title,
+                        Size = size,
+                        HasSubtitle = entry.HasSubtitle,
+                        AudioName = Path.GetFileName(entry.AudioPath),
+                        SubtitleName = entry.HasSubtitle ? Path.GetFileName(entry.SubtitlePath!) : ""
+                    });
+                    audioPaths.Add(entry.AudioPath);
+                    subtitlePaths.Add(entry.HasSubtitle ? entry.SubtitlePath! : "");
+                }
+
+                entries.Add(new LanShareServer.ShareBookEntry
+                {
+                    Info = new ShareBook
+                    {
+                        Title = book.Title,
+                        Folder = book.FolderPath,
+                        HasCover = !string.IsNullOrEmpty(book.CoverPath) && File.Exists(book.CoverPath),
+                        CoverName = string.IsNullOrEmpty(book.CoverPath) ? "" : Path.GetFileName(book.CoverPath),
+                        Chapters = chapters
+                    },
+                    AudioPaths = audioPaths,
+                    SubtitlePaths = subtitlePaths,
+                    CoverPath = book.CoverPath
+                });
+            }
+
+            var server = new LanShareServer();
+            server.LibraryProvider = () => entries;
+            server.Start();
+
+            Console.WriteLine($"KATARU 局域网共享已启动：{entries.Count} 本 / {result.Entries.Count} 章");
+            foreach (var url in server.Urls)
+            {
+                Console.WriteLine("  " + url);
+            }
+            Console.WriteLine("按 Ctrl+C 结束。");
+
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => server.Dispose();
+            Console.CancelKeyPress += (_, eventArgs) =>
+            {
+                eventArgs.Cancel = true;
+                server.Dispose();
+                Application.Current.Shutdown(0);
+            };
+        }
+
         protected override async void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
@@ -46,6 +128,14 @@ namespace AudioBookPlayer
             // 启动之后才发生的异常也要能看见、能查（以前是直接闪退，什么线索都没有）
             DispatcherUnhandledException += OnDispatcherUnhandledException;
             AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+
+            // 无头模式：只当局域网服务器（不开窗口），手机连同一 Wi-Fi 直接拉书
+            if (e.Args.Length > 0 && e.Args[0] == "--serve")
+            {
+                ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                RunHeadlessServer(e.Args);
+                return;
+            }
 
             // 离线工具：把中文翻译贴到日文有声书字幕的时间轴上（不建窗口）
             if (e.Args.Length > 0 && e.Args[0] == "--make-chunks")

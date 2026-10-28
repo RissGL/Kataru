@@ -20,9 +20,49 @@ import { ColorUtil, Hsl } from '../model/ColorUtil';
 import { ColorPlate } from '../controls/ColorPlate';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { display } from '@kit.ArkUI';
+import { http } from '@kit.NetworkKit';
+import { request } from '@kit.BasicServicesKit';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
 import { SubtitleSynchronizer } from '../model/SubtitleSynchronizer';
 import { Timecode } from '../model/Timecode';
+
+/** 电脑端 /api/library 返回的一本书 */
+class RemoteBook {
+  index: number = 0;
+  title: string = '';
+  totalSize: number = 0;
+  chapterCount: number = 0;
+
+  constructor(index: number, title: string, totalSize: number, chapterCount: number) {
+    this.index = index;
+    this.title = title;
+    this.totalSize = totalSize;
+    this.chapterCount = chapterCount;
+  }
+}
+/** 电脑端 /api/library 的响应结构（只要用到的那几个字段） */
+class ShareChapter {
+  index: number = 0;
+  title: string = '';
+  size: number = 0;
+  hasSubtitle: boolean = false;
+  audioName: string = '';
+}
+
+class ShareBookMeta {
+  index: number = 0;
+  title: string = '';
+  totalSize: number = 0;
+  hasCover: boolean = false;
+  chapters: ShareChapter[] = [];
+}
+
+class ShareLibraryResponse {
+  name: string = '';
+  version: number = 0;
+  books: ShareBookMeta[] = [];
+}
+
 const PREFS_NAME: string = 'kataru_settings';
 const PREF_KEY_ROOT: string = 'library_uri';
 
@@ -304,6 +344,11 @@ struct Index {
   @State readingSecondarySize: number = 13;
   /** 首页「继续收听」卡片是否显示 */
   @State showResumeCard: boolean = true;
+  /** 局域网拉书：服务器地址、连接状态、远端书列表、下载进度 */
+  @State shareUrl: string = 'http://192.168.43.1:8765';
+  @State shareStatus: string = '';
+  @State shareBooks: RemoteBook[] = [];
+  @State shareBusy: boolean = false;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -3046,6 +3091,81 @@ struct Index {
         }
 
         if (this.settingsGroup === 3) {
+        this.SectionTitle('局域网拉书')
+
+        Text('电脑上点「启动共享」，把显示的地址填这里（同一 Wi-Fi 或电脑连手机热点）')
+          .fontFamily(this.uiFont())
+          .fontSize(11)
+          .fontColor(this.theme.textSecondary)
+          .margin({ bottom: 4 })
+
+        Row() {
+          TextInput({ text: this.shareUrl, placeholder: 'http://192.168.43.1:8765' })
+            .layoutWeight(1)
+            .height(38)
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+            .backgroundColor(this.theme.panelBackground)
+            .onChange((value: string) => {
+              this.shareUrl = value;
+            })
+
+          Button(this.shareBusy ? '…' : '连接')
+            .height(38)
+            .width(72)
+            .fontSize(13)
+            .margin({ left: 8 })
+            .backgroundColor(this.theme.accent)
+            .fontColor('#FFFFFF')
+            .enabled(!this.shareBusy)
+            .onClick(() => this.connectShareServer())
+        }
+        .width('100%')
+
+        if (this.shareStatus.length > 0) {
+          Text(this.shareStatus)
+            .fontFamily(this.uiFont())
+            .fontSize(11)
+            .fontColor(this.theme.gold)
+            .margin({ top: 6, bottom: 4 })
+            .width('100%')
+        }
+
+        ForEach(this.shareBooks, (book: RemoteBook) => {
+          Row() {
+            Column() {
+              Text(book.title)
+                .fontFamily(this.uiFont())
+                .fontSize(13)
+                .fontColor(this.theme.textPrimary)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(book.chapterCount + ' 章 · ' + Math.round(book.totalSize / 1048576) + ' MB')
+                .fontFamily(this.uiFont())
+                .fontSize(11)
+                .fontColor(this.theme.textSecondary)
+                .margin({ top: 2 })
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Button('下载')
+              .height(32)
+              .width(64)
+              .fontSize(12)
+              .backgroundColor(this.theme.panelBackground)
+              .fontColor(this.theme.textPrimary)
+              .enabled(!this.shareBusy)
+              .onClick(() => this.downloadRemoteBook(book))
+          }
+          .width('100%')
+          .padding({ top: 8, bottom: 8 })
+          .border({ width: { bottom: 0.5 }, color: this.theme.borderSoft })
+        }, (book: RemoteBook) => book.index.toString())
+
+        Blank().height(6)
+        this.SectionTitle('媒体库')
+
         this.SectionTitle('媒体库')
 
         Row() {
@@ -3691,6 +3811,121 @@ struct Index {
   private currentLineTint(): string {
     const hsl = ColorUtil.hexToHsl(this.theme.pageBackground);
     return hsl.l > 60 ? '#14000000' : '#22C9A227';
+  }
+
+  /** 连电脑的共享服务，取回书单 */
+  private async connectShareServer(): Promise<void> {
+    const base = this.shareUrl.trim().replace(/\/+$/, '');
+    if (base.length === 0) {
+      this.shareStatus = '先填电脑上显示的地址';
+      return;
+    }
+
+    this.shareBusy = true;
+    this.shareStatus = '连接中…';
+    try {
+      const client = http.createHttp();
+      const response = await client.request(base + '/api/library', {
+        method: http.RequestMethod.GET,
+        connectTimeout: 8000,
+        readTimeout: 15000
+      });
+      client.destroy();
+
+      if (response.responseCode !== 200) {
+        this.shareStatus = `连接失败：HTTP ${response.responseCode}`;
+        return;
+      }
+
+      const text = response.result as string;
+      const parsed = JSON.parse(text) as ShareLibraryResponse;
+      const books: RemoteBook[] = [];
+      for (const book of parsed.books) {
+        books.push(new RemoteBook(book.index, book.title, book.totalSize, book.chapters.length));
+      }
+      this.shareBooks = books;
+      this.shareStatus = `已连接，共 ${books.length} 本`;
+      hilog.info(0x0000, Index.TAG, 'share: %{public}d books from %{public}s', books.length, base);
+    } catch (error) {
+      const err = error as BusinessError;
+      this.shareStatus = '连接失败：' + err.message;
+      hilog.error(0x0000, Index.TAG, 'share connect failed: %{public}s', JSON.stringify(error));
+    } finally {
+      this.shareBusy = false;
+    }
+  }
+
+  /** 从电脑下载一整本书（音频 + 字幕）到沙箱，然后刷新书架 */
+  private async downloadRemoteBook(book: RemoteBook): Promise<void> {
+    if (this.shareBusy) {
+      return;
+    }
+
+    const base = this.shareUrl.trim().replace(/\/+$/, '');
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const safeName = book.title.replace(/[\/\\:*?"<>|]/g, '_');
+    const bookDir = context.filesDir + '/books/' + safeName;
+
+    this.shareBusy = true;
+    this.shareStatus = `下载《${book.title}》…`;
+    try {
+      if (!fileIo.accessSync(bookDir)) {
+        fileIo.mkdirSync(bookDir, true);
+      }
+
+      const chapters = await this.fetchRemoteChapters(base, book.index);
+      let done = 0;
+      for (const chapter of chapters) {
+        const audioTarget = bookDir + '/' + chapter.audioName;
+        await this.downloadTo(base, `/api/file?book=${book.index}&chapter=${chapter.index}&kind=audio`, audioTarget);
+        done++;
+        this.shareStatus = `《${book.title}》 ${done}/${chapters.length} 章`;
+      }
+
+      this.shareStatus = `《${book.title}》下载完成，正在刷新书架`;
+      this.refreshLibrary();
+      this.shareStatus = `《${book.title}》已加入书架`;
+      this.shareBooks = this.shareBooks.filter((item: RemoteBook) => item.index !== book.index);
+    } catch (error) {
+      const err = error as BusinessError;
+      this.shareStatus = '下载失败：' + err.message;
+      hilog.error(0x0000, Index.TAG, 'share download failed: %{public}s', JSON.stringify(error));
+    } finally {
+      this.shareBusy = false;
+    }
+  }
+
+  /** 取某本书的章节明细（含文件名、是否有字幕） */
+  private async fetchRemoteChapters(base: string, bookIndex: number): Promise<ShareChapter[]> {
+    const client = http.createHttp();
+    const response = await client.request(base + '/api/library', {
+      method: http.RequestMethod.GET,
+      connectTimeout: 8000,
+      readTimeout: 15000
+    });
+    client.destroy();
+    const parsed = JSON.parse(response.result as string) as ShareLibraryResponse;
+    const target = parsed.books[bookIndex];
+    if (target === undefined) {
+      throw new Error('书不存在');
+    }
+    return target.chapters;
+  }
+
+  /** 用系统下载管理器把单个文件拉到沙箱（大文件不占 JS 内存） */
+  private async downloadTo(base: string, path: string, target: string): Promise<void> {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (fileIo.accessSync(target)) {
+      fileIo.unlinkSync(target);
+    }
+    const task = await request.downloadFile(context, {
+      url: base + path,
+      filePath: target
+    });
+    await new Promise<void>((resolve, reject) => {
+      task.on('complete', () => resolve());
+      task.on('fail', (err: number) => reject(new Error('下载失败 code=' + err)));
+    });
   }
 
   /** 切到阅读页后延迟一点滚动（LazyForEach 首帧还没建好） */
