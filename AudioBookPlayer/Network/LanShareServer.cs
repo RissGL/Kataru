@@ -22,6 +22,16 @@ public sealed class ShareChapter
     public string SubtitleName { get; init; } = "";
 }
 
+/// <summary>书文件夹里的一个文件（相对路径 + 大小 + 类型）。</summary>
+public sealed class ShareFile
+{
+    /// <summary>相对书目录的路径（用 / 分隔）。</summary>
+    public string Name { get; init; } = "";
+    public long Size { get; init; }
+    /// <summary>audio / subtitle / cover / other</summary>
+    public string Kind { get; init; } = "other";
+}
+
 /// <summary>共享出去的一本书。</summary>
 public sealed class ShareBook
 {
@@ -30,7 +40,9 @@ public sealed class ShareBook
     public bool HasCover { get; init; }
     public string CoverName { get; init; } = "";
     public List<ShareChapter> Chapters { get; init; } = new();
-    public long TotalSize => Chapters.Sum(c => c.Size);
+    /// <summary>整个书文件夹里的所有文件（手机要整本拉走，不然缺字幕缺封面）。</summary>
+    public List<ShareFile> Files { get; init; } = new();
+    public long TotalSize => Files.Count > 0 ? Files.Sum(f => f.Size) : Chapters.Sum(c => c.Size);
 }
 
 /// <summary>
@@ -69,6 +81,8 @@ public sealed class LanShareServer : IDisposable
         public List<string> AudioPaths { get; init; } = new();
         public List<string> SubtitlePaths { get; init; } = new();
         public string? CoverPath { get; init; }
+        /// <summary>与 Info.Files 一一对应的绝对路径。</summary>
+        public List<string> FilePaths { get; init; } = new();
     }
 
     /// <summary>本机所有可用于访问的 URL（有线/无线 IPv4 + 环回）。</summary>
@@ -243,6 +257,13 @@ public sealed class LanShareServer : IDisposable
                 folder = e.Info.Folder,
                 hasCover = e.Info.HasCover,
                 totalSize = e.Info.TotalSize,
+                files = e.Info.Files.Select((f, fi) => new
+                {
+                    index = fi,
+                    name = f.Name,
+                    size = f.Size,
+                    kind = f.Kind
+                }),
                 chapters = e.Info.Chapters.Select((c, ci) => new
                 {
                     index = ci,
@@ -260,6 +281,7 @@ public sealed class LanShareServer : IDisposable
     {
         var bookIndex = ParseInt(QueryValue(query, "book"), -1);
         var chapterIndex = ParseInt(QueryValue(query, "chapter"), -1);
+        var fileIndex = ParseInt(QueryValue(query, "file"), -1);
         var kind = QueryValue(query, "kind");
         if (string.IsNullOrEmpty(kind)) kind = "audio";
 
@@ -271,6 +293,18 @@ public sealed class LanShareServer : IDisposable
         }
 
         var entry = entries[bookIndex];
+
+        // 新协议：按文件索引下载整本书里的任意文件（音频/字幕/封面/附件）
+        if (fileIndex >= 0)
+        {
+            if (fileIndex >= entry.FilePaths.Count || !File.Exists(entry.FilePaths[fileIndex]))
+            {
+                await WriteTextAsync(stream, 404, "text/plain; charset=utf-8", "no such file").ConfigureAwait(false);
+                return;
+            }
+            await ServePathAsync(stream, entry.FilePaths[fileIndex], headers, isHead).ConfigureAwait(false);
+            return;
+        }
         if (chapterIndex < 0 || chapterIndex >= entry.AudioPaths.Count)
         {
             await WriteTextAsync(stream, 404, "text/plain; charset=utf-8", "no such chapter").ConfigureAwait(false);

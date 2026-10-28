@@ -16,6 +16,7 @@ import { LiveSubtitle } from '../model/LiveSubtitle';
 import { NowPlayingNotification } from '../model/NowPlayingNotification';
 import { THEME_PRESETS, ThemeColors, ThemePreset, ThemeStore } from '../model/Theme';
 import { AudioChapterMark, Mp4Chapters } from '../model/Mp4Chapters';
+import { CoverBytes, Mp4Cover } from '../model/Mp4Cover';
 import { ColorUtil, Hsl } from '../model/ColorUtil';
 import { ColorPlate } from '../controls/ColorPlate';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
@@ -49,12 +50,20 @@ class ShareChapter {
   audioName: string = '';
 }
 
+class ShareFileMeta {
+  index: number = 0;
+  name: string = '';
+  size: number = 0;
+  kind: string = '';
+}
+
 class ShareBookMeta {
   index: number = 0;
   title: string = '';
   totalSize: number = 0;
   hasCover: boolean = false;
   chapters: ShareChapter[] = [];
+  files: ShareFileMeta[] = [];
 }
 
 class ShareLibraryResponse {
@@ -352,6 +361,8 @@ struct Index {
   /** 内部自检开关（仅在开发调试时打开）：启动后自动连接共享服务 */
   private shareAutoTest: boolean = false;
   private shareAutoDownloadIndex: number = -1;
+  /** 正在从 m4b 里抠封面（避免 refresh 递归） */
+  private embeddedCoverBusy: boolean = false;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -375,6 +386,9 @@ struct Index {
     // 打开本地书库（App 私有目录）：不依赖任何权限，重启/重装都不会丢。
     // 「书库文件夹」只是同步源，书架空的时候选一次即可。
     this.openLocalLibrary();
+    setTimeout(() => {
+      this.ensureEmbeddedCovers();
+    }, 2500);
 
     // 内部自检：开发时用偏好文件打开，验证「连电脑 → 下载 → 刷新书架」整条链路
     if (this.shareAutoTest) {
@@ -3111,7 +3125,14 @@ struct Index {
           .fontFamily(this.uiFont())
           .fontSize(11)
           .fontColor(this.theme.textSecondary)
-          .margin({ bottom: 4 })
+          .margin({ bottom: 2 })
+        Text('下载到：' + (this.libraryRoot.length > 0 ? this.libraryRoot : '(书库目录未初始化)'))
+          .fontFamily(this.uiFont())
+          .fontSize(10)
+          .fontColor(this.theme.gold)
+          .margin({ bottom: 6 })
+          .width('100%')
+          .maxLines(2)
 
         Row() {
           TextInput({ text: this.shareUrl, placeholder: 'http://192.168.43.1:8765' })
@@ -3154,7 +3175,7 @@ struct Index {
                 .fontColor(this.theme.textPrimary)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
-              Text(book.chapterCount + ' 章 · ' + Math.round(book.totalSize / 1048576) + ' MB')
+              Text(book.chapterCount + ' 章 · ' + Math.round(book.totalSize / 1048576) + ' MB · 整本文件夹')
                 .fontFamily(this.uiFont())
                 .fontSize(11)
                 .fontColor(this.theme.textSecondary)
@@ -3827,6 +3848,53 @@ struct Index {
     return hsl.l > 60 ? '#14000000' : '#22C9A227';
   }
 
+  /**
+   * 给没有封面文件的书，从 m4b/m4a 的内嵌元数据里抠一张封面出来，
+   * 写成 cover.png/cover.jpg 放进书目录 —— 之后就走正常封面流程了。
+   */
+  private async ensureEmbeddedCovers(): Promise<void> {
+    if (this.embeddedCoverBusy) {
+      return;
+    }
+    this.embeddedCoverBusy = true;
+    let saved = 0;
+
+    try {
+      for (const book of this.books) {
+        if (book.coverPath.length > 0 || book.chapters.length === 0) {
+          continue;
+        }
+        const audioPath = book.chapters[0].audioPath;
+        const cover = Mp4Cover.extract(audioPath);
+        if (cover === null) {
+          continue;
+        }
+
+        const target = book.folderPath + '/cover.' + cover.extension;
+        try {
+          const file = fileIo.openSync(target,
+            fileIo.OpenMode.CREATE | fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.TRUNC);
+          const buffer = cover.bytes.buffer.slice(cover.bytes.byteOffset,
+            cover.bytes.byteOffset + cover.bytes.byteLength);
+          fileIo.writeSync(file.fd, buffer);
+          fileIo.closeSync(file);
+          saved++;
+          hilog.info(0x0000, Index.TAG, 'embedded cover: %{public}s (%{public}d bytes)',
+            target, cover.bytes.byteLength);
+        } catch (error) {
+          hilog.warn(0x0000, Index.TAG, 'write embedded cover failed: %{public}s',
+            JSON.stringify(error));
+        }
+      }
+    } finally {
+      this.embeddedCoverBusy = false;
+    }
+
+    if (saved > 0) {
+      this.refreshLibrary();
+    }
+  }
+
   /** 内部自检：连接 + 可选自动下载一本书（只给开发调试用） */
   private async runShareSelfTest(): Promise<void> {
     hilog.info(0x0000, Index.TAG, 'share self-test: url=%{public}s', this.shareUrl);
@@ -3894,8 +3962,15 @@ struct Index {
 
     const base = this.shareUrl.trim().replace(/\/+$/, '');
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    // 下载到「当前书库目录」，也就是设置里显示的「App 内部目录」，
+    // 和书架扫描用的是同一个根目录，拉完立刻能被扫到。
+    const root: string = this.libraryRoot.length > 0 ? this.libraryRoot : (context.filesDir + '/books');
+    if (!fileIo.accessSync(root)) {
+      fileIo.mkdirSync(root, true);
+    }
+
     const safeName = book.title.replace(/[\/\\:*?"<>|]/g, '_');
-    const bookDir = context.filesDir + '/books/' + safeName;
+    const bookDir = root + '/' + safeName;
 
     this.shareBusy = true;
     this.shareStatus = `下载《${book.title}》…`;
@@ -3904,24 +3979,54 @@ struct Index {
         fileIo.mkdirSync(bookDir, true);
       }
 
-      const chapters = await this.fetchRemoteChapters(base, book.index);
+      const meta = await this.fetchRemoteBookMeta(base, book.index);
+      const files = meta.files;
+      if (files.length === 0) {
+        throw new Error('电脑端没有列出文件');
+      }
+
       let done = 0;
-      for (const chapter of chapters) {
-        // 电脑端没给文件名时兜底，避免落盘成 "undefined"
-        let fileName: string = chapter.audioName;
-        if (fileName === undefined || fileName === null || fileName.length === 0) {
-          fileName = book.title + ' - ' + (chapter.index + 1) + '.m4b';
+      let skipped = 0;
+      for (const file of files) {
+        // 保留原目录结构：字幕、封面、epub 附件都要跟着走
+        let relative: string = file.name;
+        if (relative === undefined || relative === null || relative.length === 0) {
+          relative = 'file-' + file.index;
         }
-        fileName = fileName.replace(/[\/\\:*?"<>|]/g, '_');
-        const audioTarget = bookDir + '/' + fileName;
-        await this.downloadTo(base, `/api/file?book=${book.index}&chapter=${chapter.index}&kind=audio`, audioTarget);
+        const safeRelative = relative.split('../').join('').replace(/[<>:"|?*]/g, '_');
+        const target = bookDir + '/' + safeRelative;
+
+        const slash = safeRelative.lastIndexOf('/');
+        if (slash > 0) {
+          const subDir = bookDir + '/' + safeRelative.substring(0, slash);
+          if (!fileIo.accessSync(subDir)) {
+            fileIo.mkdirSync(subDir, true);
+          }
+        }
+
+        // 已存在且大小一致就跳过：重复点下载不会再占一份空间
+        let existingSize: number = -1;
+        try {
+          if (fileIo.accessSync(target)) {
+            existingSize = fileIo.statSync(target).size;
+          }
+        } catch (error) {
+          existingSize = -1;
+        }
+
+        if (existingSize === file.size) {
+          skipped++;
+        } else {
+          await this.downloadTo(base, `/api/file?book=${book.index}&file=${file.index}`, target);
+        }
         done++;
-        this.shareStatus = `《${book.title}》 ${done}/${chapters.length} 章`;
+        this.shareStatus = `《${book.title}》 ${done}/${files.length} 个文件（跳过 ${skipped}）`;
       }
 
       this.shareStatus = `《${book.title}》下载完成，正在刷新书架`;
       this.refreshLibrary();
       this.shareStatus = `《${book.title}》已加入书架`;
+      this.ensureEmbeddedCovers();
       this.shareBooks = this.shareBooks.filter((item: RemoteBook) => item.index !== book.index);
     } catch (error) {
       const err = error as BusinessError;
@@ -3932,8 +4037,8 @@ struct Index {
     }
   }
 
-  /** 取某本书的章节明细（含文件名、是否有字幕） */
-  private async fetchRemoteChapters(base: string, bookIndex: number): Promise<ShareChapter[]> {
+  /** 取某本书的完整明细（文件清单 + 章节） */
+  private async fetchRemoteBookMeta(base: string, bookIndex: number): Promise<ShareBookMeta> {
     const client = http.createHttp();
     const response = await client.request(base + '/api/library', {
       method: http.RequestMethod.GET,
@@ -3946,7 +4051,7 @@ struct Index {
     if (target === undefined) {
       throw new Error('书不存在');
     }
-    return target.chapters;
+    return target;
   }
 
   /** 用系统下载管理器把单个文件拉到沙箱（大文件不占 JS 内存） */

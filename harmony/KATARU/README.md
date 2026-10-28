@@ -170,7 +170,7 @@ KATARU.exe --serve "D:\有声书"     # 指定书库目录
 | 接口 | 作用 |
 | --- | --- |
 | `GET /api/library` | 返回书库 JSON（书名 / 章数 / 每章大小） |
-| `GET /api/file?book=0&chapter=0&kind=audio` | 下发音频（支持 `Range`，可断点续传） |
+| `GET /api/file?book=0&file=3` | 下整本书里的任意文件（音频/字幕/封面/epub 附件，支持 `Range` 断点续传） |
 | `GET /api/cover?book=0` | 下发封面图 |
 | `GET /` | 浏览器里能打开的简易书单页 |
 
@@ -180,7 +180,9 @@ KATARU.exe --serve "D:\有声书"     # 指定书库目录
 
 - 需要 `ohos.permission.INTERNET`
 - 下载走系统 `@ohos.request.downloadFile`，710 MB 的文件也不会占 JS 内存
-- 拉完直接进 `filesDir/books/<书名>/`，和「选择书库文件夹」同步进来的书完全等价
+- **整本文件夹一起拉**：音频、字幕、封面、epub 等附件按原相对路径落盘，不会再只下一个 m4b
+- 落盘位置就是设置里显示的「App 内部目录」（当前书库根目录），和「选择书库文件夹」同步进来的书完全等价；已存在且大小一致的文件会跳过
+- 没有独立封面文件的书，App 会从 m4b 的 `moov/udta/meta/ilst/covr` 里抠出内嵌封面，写成 `cover.jpg/png` 放进书目录
 
 ### 连不上怎么办
 

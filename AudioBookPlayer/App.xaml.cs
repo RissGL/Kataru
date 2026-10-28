@@ -85,6 +85,30 @@ namespace AudioBookPlayer
                     subtitlePaths.Add(entry.HasSubtitle ? entry.SubtitlePath! : "");
                 }
 
+                var files = new List<ShareFile>();
+                var filePaths = new List<string>();
+                var bookRoot = Path.GetFullPath(book.FolderPath);
+                try
+                {
+                    foreach (var path in Directory.GetFiles(bookRoot, "*", SearchOption.AllDirectories))
+                    {
+                        long size = 0;
+                        try { size = new FileInfo(path).Length; } catch { }
+                        var relative = Path.GetRelativePath(bookRoot, path).Replace('\\', '/');
+                        var lower = relative.ToLowerInvariant();
+                        var kind = lower.EndsWith(".srt") || lower.EndsWith(".ass") || lower.EndsWith(".vtt")
+                            ? "subtitle"
+                            : (lower.EndsWith(".jpg") || lower.EndsWith(".jpeg") || lower.EndsWith(".png") ||
+                               lower.EndsWith(".webp") || lower.EndsWith(".bmp"))
+                                ? "cover"
+                                : audioPaths.Contains(path) ? "audio" : "other";
+
+                        files.Add(new ShareFile { Name = relative, Size = size, Kind = kind });
+                        filePaths.Add(path);
+                    }
+                }
+                catch { }
+
                 entries.Add(new LanShareServer.ShareBookEntry
                 {
                     Info = new ShareBook
@@ -93,11 +117,13 @@ namespace AudioBookPlayer
                         Folder = book.FolderPath,
                         HasCover = !string.IsNullOrEmpty(book.CoverPath) && File.Exists(book.CoverPath),
                         CoverName = string.IsNullOrEmpty(book.CoverPath) ? "" : Path.GetFileName(book.CoverPath),
-                        Chapters = chapters
+                        Chapters = chapters,
+                        Files = files
                     },
                     AudioPaths = audioPaths,
                     SubtitlePaths = subtitlePaths,
-                    CoverPath = book.CoverPath
+                    CoverPath = book.CoverPath,
+                    FilePaths = filePaths
                 });
             }
 
