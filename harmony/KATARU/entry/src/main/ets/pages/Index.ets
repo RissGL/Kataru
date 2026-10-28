@@ -1365,6 +1365,7 @@ struct Index {
       // 顶栏
       Row() {
         Text('KATARU')
+        .fontFamily(this.uiFont())
           .fontSize(19)
           .fontWeight(FontWeight.Bold)
           .fontColor(this.theme.textPrimary)
@@ -1376,6 +1377,7 @@ struct Index {
 
         if (this.currentTab === 2 && this.lines.length > 0) {
           Text(`${this.currentIndex + 1} / ${this.lines.length}`)
+          .fontFamily(this.uiFont())
             .fontSize(12)
             .fontColor(this.theme.textSecondary)
             .margin({ left: 8 })
@@ -1422,6 +1424,7 @@ struct Index {
   @Builder
   TabBarItem(label: string, index: number) {
     Text(label)
+    .fontFamily(this.uiFont())
       .fontSize(13)
       .fontWeight(this.currentTab === index ? FontWeight.Medium : FontWeight.Normal)
       .fontColor(this.currentTab === index ? this.theme.gold : this.theme.textSecondary)
@@ -1436,6 +1439,7 @@ struct Index {
       if (this.books.length === 0) {
         Column() {
           Text(this.needsReauth ? '书库授权失效了' : '书架是空的')
+          .fontFamily(this.uiFont())
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.theme.textPrimary)
@@ -1473,6 +1477,7 @@ struct Index {
 
             Column() {
               Text('继续收听')
+              .fontFamily(this.uiFont())
                 .fontSize(10)
                 .fontColor(this.theme.gold)
               Text(this.selectedChapter.title)
@@ -1549,6 +1554,7 @@ struct Index {
                         .height(34)
                         .fillColor(this.theme.textSecondary)
                       Text(book.title.substring(0, 2))
+                      .fontFamily(this.uiFont())
                         .fontSize(20)
                         .fontColor(this.theme.textSecondary)
                         .margin({ top: 6 })
@@ -1571,6 +1577,7 @@ struct Index {
                 .width('100%')
 
                 Text(book.title)
+                .fontFamily(this.uiFont())
                   .fontSize(13)
                   .fontColor(this.theme.textPrimary)
                   .maxLines(1)
@@ -1579,10 +1586,12 @@ struct Index {
 
                 Row() {
                   Text(book.chapterCount + ' 章')
+                  .fontFamily(this.uiFont())
                     .fontSize(11)
                     .fontColor(this.theme.textSecondary)
                   Blank()
                   Text(this.bookProgressText(book))
+                  .fontFamily(this.uiFont())
                     .fontSize(11)
                     .fontColor(this.theme.gold)
                 }
@@ -1617,6 +1626,7 @@ struct Index {
       }
 
       Text(this.statusText)
+      .fontFamily(this.uiFont())
         .fontSize(11)
         .fontColor(this.theme.textSecondary)
         .width('100%')
@@ -1657,6 +1667,7 @@ struct Index {
       if (this.selectedBook !== null) {
         Row() {
           Text('换封面')
+          .fontFamily(this.uiFont())
             .fontSize(11)
             .fontColor(this.theme.textSecondary)
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -1665,6 +1676,7 @@ struct Index {
             .onClick(() => this.chooseCoverImage())
 
           Text('恢复自动封面')
+          .fontFamily(this.uiFont())
             .fontSize(11)
             .fontColor(this.theme.textSecondary)
             .padding({ left: 10, right: 10, top: 4, bottom: 4 })
@@ -1686,6 +1698,7 @@ struct Index {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
       Text(this.selectedChapter === null ? '选一本书开始' : this.currentChapterProgressText())
+      .fontFamily(this.uiFont())
         .fontSize(12)
         .fontColor(this.theme.textSecondary)
         .margin({ top: 4 })
@@ -1731,6 +1744,7 @@ struct Index {
           Row() {
             ForEach(this.embeddedChapters, (mark: AudioChapterMark, index: number) => {
               Text(mark.title.length > 0 ? mark.title : Timecode.formatShort(mark.startMs))
+              .fontFamily(this.uiFont())
                 .fontSize(12)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1759,6 +1773,7 @@ struct Index {
           Row() {
             ForEach(this.selectedBook.chapters, (chapter: Chapter, index: number) => {
               Text(chapter.title)
+              .fontFamily(this.uiFont())
                 .fontSize(12)
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1805,6 +1820,7 @@ struct Index {
           })
 
         Text(Math.round(this.volume * 100) + '%')
+        .fontFamily(this.uiFont())
           .fontSize(11)
           .width(38)
           .textAlign(TextAlign.End)
@@ -1816,6 +1832,7 @@ struct Index {
 
       Row() {
         Text(Timecode.formatShort(this.positionMs))
+        .fontFamily(this.uiFont())
           .fontSize(11)
           .fontColor(this.theme.textSecondary)
 
@@ -1836,6 +1853,7 @@ struct Index {
           })
 
         Text(Timecode.formatShort(this.durationMs))
+        .fontFamily(this.uiFont())
           .fontSize(11)
           .fontColor(this.theme.textSecondary)
       }
@@ -1885,6 +1903,7 @@ struct Index {
             .fontColor(this.theme.textPrimary)
 
           Text('字幕要和音频放同一个目录、文件名相同（01.mp3 配 01.srt）')
+          .fontFamily(this.uiFont())
             .fontSize(12)
             .fontColor(this.theme.textSecondary)
             .textAlign(TextAlign.Center)
@@ -1901,6 +1920,7 @@ struct Index {
             ListItem() {
               Row() {
                 Text(line.timeText())
+                .fontFamily(this.uiFont())
                   .fontSize(11)
                   .width(50)
                   .fontColor(this.theme.textSecondary)
@@ -1956,6 +1976,7 @@ struct Index {
           .onClick(() => this.playPreviousChapter())
 
           Text('−' + this.skipSeconds)
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .height(40)
             .textAlign(TextAlign.Center)
@@ -1978,6 +1999,7 @@ struct Index {
           .onClick(() => this.togglePlay())
 
           Text('+' + this.skipSeconds)
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .height(40)
             .textAlign(TextAlign.Center)
@@ -2016,10 +2038,12 @@ struct Index {
 
         Row() {
           Text('书本存放位置')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
           Text('App 内部目录（导入的书）')
+          .fontFamily(this.uiFont())
             .fontSize(11)
             .fontColor(this.theme.textSecondary)
             .maxLines(1)
@@ -2045,6 +2069,7 @@ struct Index {
           .onClick(() => this.rescanSandbox())
 
         Text('选一次文件夹就会同步进 App，之后书架直接可用；源里新增/删除书后再点一次即可。')
+        .fontFamily(this.uiFont())
           .fontSize(11)
           .fontColor(this.theme.textSecondary)
           .width('100%')
@@ -2076,6 +2101,7 @@ struct Index {
                 .border({ width: 1, color: preset.colors.borderSoft })
 
               Text(preset.name)
+              .fontFamily(this.uiFont())
                 .fontSize(12)
                 .fontColor(this.theme.textPrimary)
                 .margin({ left: 6 })
@@ -2102,6 +2128,7 @@ struct Index {
 
         // 自定义配色：四个色位点开就是 H/S/L 滑杆（对应桌面版的主题取色器）
         Text('自定义配色（点色块调）')
+        .fontFamily(this.uiFont())
           .fontSize(12)
           .fontColor(this.theme.textSecondary)
           .margin({ top: 4, bottom: 6 })
@@ -2116,6 +2143,7 @@ struct Index {
                 .backgroundColor(this.slotColor(slot.key))
                 .border({ width: 1, color: this.theme.borderSoft })
               Text(slot.label)
+              .fontFamily(this.uiFont())
                 .fontSize(11)
                 .fontColor(this.theme.textPrimary)
                 .margin({ left: 6 })
@@ -2152,6 +2180,7 @@ struct Index {
 
             Row() {
               Text('完成')
+              .fontFamily(this.uiFont())
                 .fontSize(12)
                 .fontColor(this.theme.gold)
                 .onClick(() => {
@@ -2172,9 +2201,11 @@ struct Index {
 
         Row() {
           Text('字号')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Text(`${Math.round(this.fontSize)}`)
+          .fontFamily(this.uiFont())
             .fontSize(12)
             .fontColor(this.theme.textSecondary)
             .layoutWeight(1)
@@ -2192,6 +2223,7 @@ struct Index {
           })
 
         Text('字体')
+        .fontFamily(this.uiFont())
           .fontSize(13)
           .fontColor(this.theme.textPrimary)
           .margin({ top: 10, bottom: 6 })
@@ -2214,6 +2246,7 @@ struct Index {
 
         Row() {
           Text('界面文字也用这个字体（阅读页/书名/标题）')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
@@ -2229,6 +2262,7 @@ struct Index {
 
         // 字幕颜色（对应桌面版的配色/字幕颜色设置）
         Text('颜色')
+        .fontFamily(this.uiFont())
           .fontSize(13)
           .fontColor(this.theme.textPrimary)
           .margin({ top: 6, bottom: 6 })
@@ -2255,6 +2289,7 @@ struct Index {
 
         Row() {
           Text('加粗字幕')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
@@ -2273,6 +2308,7 @@ struct Index {
 
         Row() {
           Text('封面裁切填充（关 = 完整显示，不裁左右）')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
@@ -2288,6 +2324,7 @@ struct Index {
 
         Row() {
           Text('通知栏/锁屏显示字幕')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
@@ -2309,6 +2346,7 @@ struct Index {
 
         Row() {
           Text('双语对照')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
@@ -2324,12 +2362,14 @@ struct Index {
 
         Row() {
           Text('快进/快退秒数')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
           Row() {
             ForEach([5, 10, 15, 30], (seconds: number) => {
               Text(seconds + 's')
+              .fontFamily(this.uiFont())
                 .fontSize(12)
                 .padding({ left: 9, right: 9, top: 5, bottom: 5 })
                 .margin({ left: 6 })
@@ -2348,6 +2388,7 @@ struct Index {
 
         Row() {
           Text('启动时回到上次收听的位置')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
@@ -2363,6 +2404,7 @@ struct Index {
 
         Row() {
           Text('书架只显示有字幕的书')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
@@ -2378,6 +2420,7 @@ struct Index {
 
         Row() {
           Text('播完自动下一章')
+          .fontFamily(this.uiFont())
             .fontSize(13)
             .fontColor(this.theme.textPrimary)
           Blank()
@@ -2415,10 +2458,12 @@ struct Index {
 
         Row() {
           Text('实况窗（灵动胶囊）')
+          .fontFamily(this.uiFont())
             .fontSize(12)
             .fontColor(this.theme.textPrimary)
           Blank()
           Text(this.liveViewAvailable ? '可用' : '未开通（需在华为后台申请实况窗权限）')
+          .fontFamily(this.uiFont())
             .fontSize(11)
             .fontColor(this.liveViewAvailable ? this.theme.gold : this.theme.textSecondary)
         }
@@ -2426,6 +2471,7 @@ struct Index {
         .padding({ top: 2, bottom: 6 })
 
         Text(this.statusText)
+        .fontFamily(this.uiFont())
           .fontSize(11)
           .fontColor(this.theme.textSecondary)
           .width('100%')
@@ -2443,6 +2489,7 @@ struct Index {
   @Builder
   SectionTitle(text: string) {
     Text(text)
+    .fontFamily(this.uiFont())
       .fontSize(12)
       .fontColor(this.theme.gold)
       .margin({ top: 10, bottom: 4 })

@@ -22,8 +22,13 @@ export struct ColorPlate {
   /** 文字/边框颜色，由外部主题决定 */
   @Prop labelColor: string = '#F1EBE1';
   @Prop frameColor: string = '#3A3330';
-  /** 拖动或点击取色时回调 */
-  onPick: (h: number, s: number, v: number) => void = () => {};
+  /** 取色回调：done=true 表示松手（此时才应该真正应用颜色并落盘） */
+  onPick: (h: number, s: number, v: number, done: boolean) => void = () => {};
+
+  /** 组件内部状态：拖动时只改这里，父组件不重绘 */
+  @State localH: number = 0;
+  @State localS: number = 100;
+  @State localV: number = 100;
 
   private svSettings: RenderingContextSettings = new RenderingContextSettings(true);
   private svCtx: CanvasRenderingContext2D = new CanvasRenderingContext2D(this.svSettings);
@@ -34,6 +39,12 @@ export struct ColorPlate {
   private hueWidth: number = 0;
   private hueHeight: number = 0;
 
+  aboutToAppear(): void {
+    this.localH = this.hue;
+    this.localS = this.sat;
+    this.localV = this.val;
+  }
+
   build() {
     Column() {
       Row() {
@@ -41,17 +52,17 @@ export struct ColorPlate {
           .width(34)
           .height(34)
           .borderRadius(17)
-          .backgroundColor(ColorUtil.hslToHex(this.hue, this.sat, this.val / 2 + 25))
+          .backgroundColor(ColorUtil.hsvToHex(this.localH, this.localS, this.localV))
           .border({ width: 1, color: this.frameColor })
 
-        Text(ColorUtil.hslToHex(this.hue, this.sat, this.val / 2 + 25))
+        Text(ColorUtil.hsvToHex(this.localH, this.localS, this.localV))
           .fontSize(12)
           .fontColor(this.labelColor)
           .margin({ left: 10 })
 
         Blank()
 
-        Text('饱和 ' + Math.round(this.sat) + ' · 明度 ' + Math.round(this.val))
+        Text('饱和 ' + Math.round(this.localS) + ' · 明度 ' + Math.round(this.localV))
           .fontSize(11)
           .fontColor(this.labelColor)
       }
@@ -75,9 +86,13 @@ export struct ColorPlate {
           }
           const x = event.touches[0].x;
           const y = event.touches[0].y;
-          const s = Math.max(0, Math.min(100, (x / this.svWidth) * 100));
-          const v = Math.max(0, Math.min(100, (1 - y / this.svHeight) * 100));
-          this.onPick(this.hue, s, v);
+          this.localS = Math.max(0, Math.min(100, (x / this.svWidth) * 100));
+          this.localV = Math.max(0, Math.min(100, (1 - y / this.svHeight) * 100));
+          this.drawSv();
+          // 只有松手才通知父组件（避免拖动时整页重绘 + 频繁写磁盘）
+          if (event.type === TouchType.Up) {
+            this.onPick(this.localH, this.localS, this.localV, true);
+          }
         })
 
       // 色相条
@@ -96,8 +111,12 @@ export struct ColorPlate {
             return;
           }
           const x = event.touches[0].x;
-          const h = Math.max(0, Math.min(360, (x / this.hueWidth) * 360));
-          this.onPick(h, this.sat, this.val);
+          this.localH = Math.max(0, Math.min(360, (x / this.hueWidth) * 360));
+          this.drawHue();
+          this.drawSv();
+          if (event.type === TouchType.Up) {
+            this.onPick(this.localH, this.localS, this.localV, true);
+          }
         })
     }
     .width('100%')
@@ -119,7 +138,7 @@ export struct ColorPlate {
     ctx.clearRect(0, 0, w, h);
 
     // 纯色相底
-    ctx.fillStyle = ColorUtil.hslToHex(this.hue, 100, 50);
+    ctx.fillStyle = ColorUtil.hslToHex(this.localH, 100, 50);
     ctx.fillRect(0, 0, w, h);
 
     // 横向：白 → 透明
@@ -137,8 +156,8 @@ export struct ColorPlate {
     ctx.fillRect(0, 0, w, h);
 
     // 当前选点
-    const cx = (this.sat / 100) * w;
-    const cy = (1 - this.val / 100) * h;
+    const cx = (this.localS / 100) * w;
+    const cy = (1 - this.localV / 100) * h;
     ctx.beginPath();
     ctx.arc(cx, cy, 7, 0, Math.PI * 2);
     ctx.strokeStyle = '#FFFFFF';
@@ -164,7 +183,7 @@ export struct ColorPlate {
     }
 
     // 当前位置指示
-    const cx = (this.hue / 360) * w;
+    const cx = (this.localH / 360) * w;
     ctx.beginPath();
     ctx.arc(cx, h / 2, 9, 0, Math.PI * 2);
     ctx.strokeStyle = '#FFFFFF';
