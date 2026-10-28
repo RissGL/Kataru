@@ -17,6 +17,7 @@ import { NowPlayingNotification } from '../model/NowPlayingNotification';
 import { THEME_PRESETS, ThemeColors, ThemePreset, ThemeStore } from '../model/Theme';
 import { AudioChapterMark, Mp4Chapters } from '../model/Mp4Chapters';
 import { ColorUtil, Hsl } from '../model/ColorUtil';
+import { ColorPlate } from '../controls/ColorPlate';
 import { SubtitleLine, SrtParser } from '../model/SrtParser';
 import { SubtitleSynchronizer } from '../model/SubtitleSynchronizer';
 import { Timecode } from '../model/Timecode';
@@ -205,6 +206,10 @@ struct Index {
   @State editH: number = 0;
   @State editS: number = 50;
   @State editL: number = 50;
+  /** 调色盘的 HSV（和 HSL 分开，避免互相转换误差） */
+  @State pickH: number = 0;
+  @State pickS: number = 100;
+  @State pickV: number = 100;
   /** 字重档位：300/400/500/700/900 */
   @State fontWeights: number[] = [300, 400, 500, 700, 900];
   @State favorites: string[] = [];
@@ -305,7 +310,38 @@ struct Index {
     return this.theme.textPrimary;
   }
 
-  /** 展开/收起某个槽位的调色滑杆 */
+  /** 调色盘取色：HSV → 十六进制，并写回对应色位 */
+  private applyHsvColor(): void {
+    const hex = ColorUtil.hsvToHex(this.pickH, this.pickS, this.pickV);
+    const slot = this.editingSlot;
+
+    if (slot === 'subtitle') {
+      this.subtitleColor = hex;
+    } else if (slot === 'outline') {
+      this.subtitleOutlineColor = hex;
+    } else if (slot === 'bg') {
+      this.theme.pageBackground = hex;
+      const panel = ColorUtil.hexToHsl(hex);
+      this.theme.panelBackground = ColorUtil.hslToHex(panel.h, panel.s, Math.min(100, panel.l + 5));
+      this.persistTheme();
+    } else if (slot === 'accent') {
+      this.theme.accent = hex;
+      this.persistTheme();
+    } else if (slot === 'gold') {
+      this.theme.gold = hex;
+      this.persistTheme();
+    } else if (slot === 'text') {
+      this.theme.textPrimary = hex;
+      const textHsl = ColorUtil.hexToHsl(hex);
+      this.theme.textSecondary = ColorUtil.hslToHex(textHsl.h, Math.max(0, textHsl.s - 10),
+        Math.min(100, textHsl.l - 20));
+      this.persistTheme();
+    }
+
+    this.saveSettings();
+  }
+
+  /** 展开/收起某个色位的调色盘 */
   private toggleSlot(slot: string): void {
     if (this.editingSlot === slot) {
       this.editingSlot = '';
@@ -315,6 +351,13 @@ struct Index {
     this.editH = hsl.h;
     this.editS = hsl.s;
     this.editL = hsl.l;
+
+    // 同步给调色盘（HSV）
+    const hsv = ColorUtil.hslToHsv(hsl.h, hsl.s, hsl.l);
+    this.pickH = hsv.h;
+    this.pickS = hsv.s;
+    this.pickV = hsv.l;
+
     this.editingSlot = slot;
   }
 
@@ -360,6 +403,9 @@ struct Index {
       custom.gold = this.theme.gold;
       custom.borderSoft = this.theme.borderSoft;
       store.putSync('custom_theme', JSON.stringify(custom));
+      // 标记"用户确实自定义过"：只有为 true 时启动才应用自定义，
+      // 否则旧的 custom_theme 会把用户选的预设覆盖掉
+      store.putSync('theme_custom_active', true);
       store.flush();
     } catch (error) {
       hilog.warn(0x0000, Index.TAG, 'persist theme failed: %{public}s', JSON.stringify(error));
@@ -372,10 +418,11 @@ struct Index {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
       store.putSync('custom_theme', '');
+      store.putSync('theme_custom_active', false);
       store.flush();
       hilog.info(0x0000, Index.TAG, 'custom theme cleared');
     } catch (error) {
-      hilog.warn(0x0000, Index.TAG, 'clear custom theme failed: %{stringify}', JSON.stringify(error));
+      hilog.warn(0x0000, Index.TAG, 'clear custom theme failed: %{public}s', JSON.stringify(error));
     }
   }
 
@@ -389,11 +436,18 @@ struct Index {
     this.statusText = '配色已恢复默认';
   }
 
-  /** 读回自定义主题（没有就用预设） */
+  /** 读回自定义主题（只有上次是自定义状态才应用，否则保持预设） */
   private loadCustomTheme(): boolean {
     try {
       const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
       const store = preferences.getPreferencesSync(context, { name: 'kataru_settings' });
+
+      const active = store.getSync('theme_custom_active', false) as boolean;
+      if (!active) {
+        hilog.info(0x0000, Index.TAG, 'custom theme inactive, keep preset');
+        return false;
+      }
+
       const raw = store.getSync('custom_theme', '') as string;
       if (raw.length === 0) {
         return false;
@@ -1458,12 +1512,18 @@ struct Index {
               this.searchText = value;
             })
 
-          Text(this.showFavoritesOnly ? '★' : '☆')
-            .fontSize(20)
-            .width(44)
-            .height(34)
-            .textAlign(TextAlign.Center)
-            .fontColor(this.showFavoritesOnly ? this.theme.gold : this.theme.textSecondary)
+          Row() {
+            Image(this.showFavoritesOnly ? $r('app.media.ic_star') : $r('app.media.ic_star_outline'))
+              .width(22)
+              .height(22)
+              .fillColor(this.showFavoritesOnly ? this.theme.gold : this.theme.textSecondary)
+          }
+          .width(44)
+          .height(38)
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => {
+            this.showFavoritesOnly = !this.showFavoritesOnly;
+          })
             .onClick(() => {
               this.showFavoritesOnly = !this.showFavoritesOnly;
             })
@@ -1484,8 +1544,10 @@ struct Index {
                       .borderRadius(6)
                   } else {
                     Column() {
-                      Text('📖')
-                        .fontSize(30)
+                      Image($r('app.media.ic_book'))
+                        .width(34)
+                        .height(34)
+                        .fillColor(this.theme.textSecondary)
                       Text(book.title.substring(0, 2))
                         .fontSize(20)
                         .fontColor(this.theme.textSecondary)
@@ -1499,10 +1561,11 @@ struct Index {
                   }
 
                   // 收藏星标（桌面版有收藏功能）
-                  Text(this.isFavorite(book) ? '★' : '☆')
-                    .fontSize(18)
-                    .fontColor(this.isFavorite(book) ? this.theme.gold : '#CCFFFFFF')
-                    .padding(6)
+                  Image(this.isFavorite(book) ? $r('app.media.ic_star') : $r('app.media.ic_star_outline'))
+                    .width(18)
+                    .height(18)
+                    .fillColor(this.isFavorite(book) ? this.theme.gold : '#CCFFFFFF')
+                    .margin(6)
                     .onClick(() => this.toggleFavorite(book))
                 }
                 .width('100%')
@@ -1578,7 +1641,10 @@ struct Index {
           .margin({ top: 8 })
       } else {
         Column() {
-          Text('📖').fontSize(36)
+          Image($r('app.media.ic_book'))
+            .width(48)
+            .height(48)
+            .fillColor(this.theme.textSecondary)
         }
         .width(150 * this.uiScale)
         .aspectRatio(0.83)
@@ -1721,9 +1787,10 @@ struct Index {
 
       // 音量
       Row() {
-        Text('🔈')
-          .fontSize(14)
-          .fontColor(this.theme.textSecondary)
+        Image($r('app.media.ic_volume'))
+          .width(16)
+          .height(16)
+          .fillColor(this.theme.textSecondary)
 
         Slider({ value: this.volume * 100, min: 0, max: 100, step: 1 })
           .layoutWeight(1)
@@ -1874,6 +1941,66 @@ struct Index {
         .layoutWeight(1)
         .padding({ left: 8, right: 8 })
         .scrollBar(BarState.Auto)
+
+        // 阅读页的播放控制条（边看边听，不用切回播放页）
+        Row() {
+          Row() {
+            Image($r('app.media.ic_prev'))
+              .width(22)
+              .height(22)
+              .fillColor(this.theme.textPrimary)
+          }
+          .width(46)
+          .height(44)
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => this.playPreviousChapter())
+
+          Text('−' + this.skipSeconds)
+            .fontSize(13)
+            .height(40)
+            .textAlign(TextAlign.Center)
+            .padding({ left: 10, right: 10 })
+            .fontColor(this.theme.textSecondary)
+            .onClick(() => this.skip(-this.skipSeconds * 1000))
+
+          Row() {
+            Image(this.isPlaying ? $r('app.media.ic_pause') : $r('app.media.ic_play'))
+              .width(24)
+              .height(24)
+              .fillColor('#FFFFFF')
+          }
+          .width(56)
+          .height(56)
+          .borderRadius(28)
+          .justifyContent(FlexAlign.Center)
+          .backgroundColor(this.theme.accent)
+          .margin({ left: 8, right: 8 })
+          .onClick(() => this.togglePlay())
+
+          Text('+' + this.skipSeconds)
+            .fontSize(13)
+            .height(40)
+            .textAlign(TextAlign.Center)
+            .padding({ left: 10, right: 10 })
+            .fontColor(this.theme.textSecondary)
+            .onClick(() => this.skip(this.skipSeconds * 1000))
+
+          Row() {
+            Image($r('app.media.ic_next'))
+              .width(22)
+              .height(22)
+              .fillColor(this.theme.textPrimary)
+          }
+          .width(46)
+          .height(44)
+          .justifyContent(FlexAlign.Center)
+          .onClick(() => this.playNextChapter())
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(VerticalAlign.Center)
+        .padding({ top: 6, bottom: 8 })
+        .backgroundColor(this.theme.panelBackground)
       }
     }
     .width('100%')
@@ -2008,55 +2135,35 @@ struct Index {
 
         if (this.editingSlot.length > 0) {
           Column() {
-            Row() {
-              Text('色相')
-                .fontSize(11)
-                .width(36)
-                .fontColor(this.theme.textSecondary)
-              Slider({ value: this.editH, min: 0, max: 360, step: 1 })
-                .layoutWeight(1)
-                .selectedColor(this.theme.gold)
-                .onChange((value: number) => {
-                  this.editH = value;
-                  this.applySlotColor();
-                })
-            }
-            .width('100%')
+            // 调色盘（HSV：饱和/明度方块 + 色相条）
+            ColorPlate({
+              hue: this.pickH,
+              sat: this.pickS,
+              val: this.pickV,
+              labelColor: this.theme.textPrimary,
+              frameColor: this.theme.borderSoft,
+              onPick: (h: number, s: number, v: number) => {
+                this.pickH = h;
+                this.pickS = s;
+                this.pickV = v;
+                this.applyHsvColor();
+              }
+            })
 
             Row() {
-              Text('饱和')
-                .fontSize(11)
-                .width(36)
-                .fontColor(this.theme.textSecondary)
-              Slider({ value: this.editS, min: 0, max: 100, step: 1 })
-                .layoutWeight(1)
-                .selectedColor(this.theme.gold)
-                .onChange((value: number) => {
-                  this.editS = value;
-                  this.applySlotColor();
+              Text('完成')
+                .fontSize(12)
+                .fontColor(this.theme.gold)
+                .onClick(() => {
+                  this.editingSlot = '';
                 })
             }
             .width('100%')
-
-            Row() {
-              Text('明度')
-                .fontSize(11)
-                .width(36)
-                .fontColor(this.theme.textSecondary)
-              Slider({ value: this.editL, min: 0, max: 100, step: 1 })
-                .layoutWeight(1)
-                .selectedColor(this.theme.gold)
-                .onChange((value: number) => {
-                  this.editL = value;
-                  this.applySlotColor();
-                })
-            }
-            .width('100%')
+            .justifyContent(FlexAlign.End)
+            .margin({ top: 6 })
           }
-          .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+          .padding({ left: 4, right: 4, top: 4, bottom: 4 })
           .margin({ bottom: 8 })
-          .borderRadius(8)
-          .backgroundColor(this.theme.panelBackground)
         }
 
         Blank().height(10)

@@ -59,6 +59,24 @@ export class ColorUtil {
     return new Hsl(Math.round(h * 360), Math.round(s * 100), Math.round(l * 100));
   }
 
+  /** HSL → HSV（调色盘用） */
+  static hslToHsv(h: number, s: number, l: number): Hsl {
+    const ss = s / 100;
+    const ll = l / 100;
+    const v = ll + ss * Math.min(ll, 1 - ll);
+    const sv = v <= 0 ? 0 : 2 * (1 - ll / v);
+    return new Hsl(h, Math.round(sv * 100), Math.round(v * 100));
+  }
+
+  /** HSV → #RRGGBB */
+  static hsvToHex(h: number, s: number, v: number): string {
+    const ss = Math.min(100, Math.max(0, s)) / 100;
+    const vv = Math.min(100, Math.max(0, v)) / 100;
+    const ll = vv * (1 - ss / 2);
+    const sl = (ll === 0 || ll === 1) ? 0 : (vv - ll) / Math.min(ll, 1 - ll);
+    return ColorUtil.hslToHex(h, sl * 100, ll * 100);
+  }
+
   /** HSL → #RRGGBB */
   static hslToHex(h: number, s: number, l: number): string {
     const hh = ((h % 360) + 360) % 360 / 360;
