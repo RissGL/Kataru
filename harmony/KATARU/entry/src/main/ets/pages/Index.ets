@@ -17,6 +17,7 @@ import { NowPlayingNotification } from '../model/NowPlayingNotification';
 import { THEME_PRESETS, ThemeColors, ThemePreset, ThemeStore } from '../model/Theme';
 import { AudioChapterMark, Mp4Chapters } from '../model/Mp4Chapters';
 import { CoverBytes, Mp4Cover } from '../model/Mp4Cover';
+import { SubtitleCardPusher } from '../model/SubtitleCardPusher';
 import { ColorUtil, Hsl } from '../model/ColorUtil';
 import { ColorPlate } from '../controls/ColorPlate';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
@@ -230,6 +231,8 @@ struct Index {
   private readingScroller: Scroller = new Scroller();
   /** 阅读页的大列表用 LazyForEach（否则 1 万条字幕会卡死） */
   private lineSource: SubtitleDataSource = new SubtitleDataSource();
+  /** 桌面悬浮字幕卡片推送器 */
+  private cardPusher: SubtitleCardPusher = new SubtitleCardPusher();
   private lastProgressSaveMs: number = 0;
   private currentAudioFile: fileIo.File | null = null;
   /**
@@ -355,6 +358,8 @@ struct Index {
   @State showResumeCard: boolean = true;
   /** 章节底部弹层是否展开 */
   @State showChapterSheet: boolean = false;
+  /** 桌面卡片状态（设置页展示） */
+  @State cardStatusText: string = '未添加到桌面';
   /** 主字幕语言偏好：original = 原文优先，zh = 中文优先 */
   @State primarySubtitlePref: string = 'original';
   /** 局域网拉书：服务器地址、连接状态、远端书列表、下载进度 */
@@ -2072,13 +2077,8 @@ struct Index {
           .textAlign(TextAlign.Center)
           .fontColor(this.subtitleColor)
           .fontWeight(this.subtitleWeight)
-          // 描边：ArkUI 没有文字描边，用同色的零偏移阴影模拟（对应桌面版的 OutlineThickness）
-          .textShadow({
-            radius: this.subtitleOutlineWidth,
-            color: this.subtitleOutlineColor,
-            offsetX: 0,
-            offsetY: 0
-          })
+          // 描边：ArkUI 没有文字 stroke，用 8 个方向的零模糊阴影拼出轮廓
+          .textShadow(this.subtitleOutlineShadows())
           .maxLines(4)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
@@ -3038,6 +3038,57 @@ struct Index {
         .width('100%')
 
         Row() {
+          Text('描边粗细')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Text(this.subtitleOutlineWidth <= 0 ? '关' : `${Math.round(this.subtitleOutlineWidth)}`)
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textSecondary)
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .padding({ top: 8 })
+
+        Slider({ value: this.subtitleOutlineWidth, min: 0, max: 8, step: 0.5 })
+          .width('100%')
+          .selectedColor(this.theme.accent)
+          .onChange((value: number) => {
+            this.subtitleOutlineWidth = value;
+            this.saveSettingsSoon();
+          })
+
+        Row() {
+          Text('描边颜色')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Row() {
+            ForEach(['#000000', '#FFFFFF', '#C9A227', '#1A1718'], (color: string) => {
+              Row()
+                .width(24)
+                .height(24)
+                .borderRadius(12)
+                .backgroundColor(color)
+                .border({
+                  width: this.subtitleOutlineColor === color ? 2 : 1,
+                  color: this.subtitleOutlineColor === color ? this.theme.gold : this.theme.borderSoft
+                })
+                .margin({ left: 8 })
+                .onClick(() => {
+                  this.subtitleOutlineColor = color;
+                  this.saveSettings();
+                })
+            }, (color: string) => color)
+          }
+        }
+        .width('100%')
+        .padding({ top: 8, bottom: 4 })
+
+        Row() {
           Text('主字幕用哪种语言')
             .fontFamily(this.uiFont())
             .fontSize(13)
@@ -3095,7 +3146,33 @@ struct Index {
         }
 
         if (this.settingsGroup === 2) {
+        this.SectionTitle('桌面悬浮字幕')
+
+        Text('长按手机桌面 → 服务卡片（小组件）→ KATARU → 「悬浮字幕」，把卡片放到桌面。播放时它会显示当前这一句，相当于桌面常驻字幕。')
+          .fontFamily(this.uiFont())
+          .fontSize(11)
+          .fontColor(this.theme.textSecondary)
+          .lineHeight(17)
+          .width('100%')
+          .margin({ bottom: 4 })
+
+        Row() {
+          Text('当前状态')
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Text(this.cardStatusText)
+            .fontFamily(this.uiFont())
+            .fontSize(11)
+            .fontColor(this.theme.gold)
+        }
+        .width('100%')
+        .padding({ top: 2, bottom: 4 })
+
+        Blank().height(6)
         this.SectionTitle('睡眠定时')
+
 
         Row() {
           Text(this.sleepMinutes > 0 ? `还剩 ${this.sleepMinutes} 分钟` : '未启用')
@@ -4007,6 +4084,34 @@ struct Index {
     }
   }
 
+  /** 字幕描边的阴影数组：4 个正方向 + 4 个斜方向，半径 0 保证是硬边 */
+  private subtitleOutlineShadows(): ShadowOptions[] {
+    const width = this.subtitleOutlineWidth;
+    const shadows: ShadowOptions[] = [];
+    if (width <= 0) {
+      return shadows;
+    }
+    const offsets: number[][] = [
+      [width, 0], [-width, 0], [0, width], [0, -width],
+      [width, width], [width, -width], [-width, width], [-width, -width]
+    ];
+    for (const offset of offsets) {
+      shadows.push({
+        radius: 0,
+        color: this.subtitleOutlineColor,
+        offsetX: offset[0],
+        offsetY: offset[1]
+      });
+    }
+    return shadows;
+  }
+
+  /** 刷新「桌面悬浮字幕」的状态文字 */
+  private refreshCardStatus(): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.cardStatusText = this.cardPusher.hasCards(context) ? '已添加到桌面，播放时会同步字幕' : '未添加到桌面';
+  }
+
   /** 有没有章节列表可展示（内嵌 chpl 或多文件） */
   private hasChapterList(): boolean {
     if (this.embeddedChapters.length > 0) {
@@ -4613,6 +4718,7 @@ struct Index {
     this.saveProgress(false);
     this.syncMediaSession(false);
     this.syncLiveSubtitle();
+    this.syncSubtitleCard();
     this.syncNowPlaying();
     this.updateEmbeddedIndex();
   }
@@ -4653,6 +4759,21 @@ struct Index {
     }
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.nowPlaying.update(context, book.title, chapter.title, this.currentText, this.isPlaying);
+  }
+
+  /** 字幕变了就推到桌面卡片（桌面上的"悬浮字幕"） */
+  private syncSubtitleCard(): void {
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (book === null || chapter === null) {
+      return;
+    }
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (!this.cardPusher.hasCards(context)) {
+      return;
+    }
+    this.cardPusher.push(context, book.title, this.currentText, this.secondaryText,
+      this.isPlaying ? '播放中' : '已暂停');
   }
 
   /** 字幕变了就更新实况窗胶囊（全在别的 App 上也能看到这句） */

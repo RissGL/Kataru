@@ -5,6 +5,8 @@
     { "name": "EntryAbility_label", "value": "KATARU" },
     { "name": "bg_reason", "value": "后台继续播放有声书" },
     { "name": "download_reason", "value": "读取 Download/KATARU Book 里的有声书和字幕" },
-    { "name": "persist_reason", "value": "记住你选的书库文件夹，下次不用再选" }
+    { "name": "persist_reason", "value": "记住你选的书库文件夹，下次不用再选" },
+  { "name": "form_subtitle_name", "value": "悬浮字幕" },
+  { "name": "form_subtitle_desc", "value": "桌面上常驻显示正在读的这一句" }
   ]
 }

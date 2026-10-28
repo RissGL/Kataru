@@ -26,7 +26,24 @@
           }
         ]
       }
-    ],
+      ],
+      "extensionAbilities": [
+        {
+          "name": "SubtitleCardAbility",
+          "srcEntry": "./ets/form/SubtitleCardAbility.ets",
+          "description": "$string:form_subtitle_desc",
+          "icon": "$media:startIcon",
+          "label": "$string:form_subtitle_name",
+          "type": "form",
+          "exported": true,
+          "metadata": [
+            {
+              "name": "ohos.extension.form",
+              "resource": "$profile:form_config"
+            }
+          ]
+        }
+      ],
     "requestPermissions": [
       {
         "name": "ohos.permission.FILE_ACCESS_PERSIST",
