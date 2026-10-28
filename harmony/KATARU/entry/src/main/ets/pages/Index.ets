@@ -1683,6 +1683,10 @@ struct Index {
       .scrollable(false)
       .onChange((index: number) => {
         this.currentTab = index;
+        // 切到阅读页时立刻定位到正在播的那一句（否则要等下一句才会跳）
+        if (index === 2) {
+          this.scrollReadingToCurrentSoon();
+        }
       })
     }
     .width('100%')
@@ -2224,7 +2228,7 @@ struct Index {
               .width('100%')
               .alignItems(VerticalAlign.Top)
               .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-              .backgroundColor(index === this.currentIndex ? '#22C9A227' : Color.Transparent)
+              .backgroundColor(index === this.currentIndex ? this.currentLineTint() : Color.Transparent)
               .borderRadius(8)
               .onClick(() => this.seekTo(line.startMs))
             }
@@ -2306,7 +2310,9 @@ struct Index {
         .justifyContent(FlexAlign.Center)
         .alignItems(VerticalAlign.Center)
         .padding({ top: 6, bottom: 8 })
-        .backgroundColor(this.theme.panelBackground)
+        // 半透明 + 顶部细线：叠在渐变/图片背景上也不突兀
+        .backgroundColor(this.translucentPanel('B3'))
+        .border({ width: { top: 0.5 }, color: this.theme.borderSoft })
       }
     }
     .width('100%')
@@ -3672,6 +3678,32 @@ struct Index {
     return '1fr 1fr 1fr';
   }
 
+  /** 面板色的半透明版本（'#AARRGGBB' 风格），让浮层贴合背景 */
+  private translucentPanel(alphaHex: string): string {
+    const hex = this.theme.panelBackground;
+    if (hex.length === 7) {
+      return '#' + alphaHex + hex.substring(1);
+    }
+    return hex;
+  }
+
+  /** 当前句高亮色：浅色背景用淡黑，深色背景用金色 */
+  private currentLineTint(): string {
+    const hsl = ColorUtil.hexToHsl(this.theme.pageBackground);
+    return hsl.l > 60 ? '#14000000' : '#22C9A227';
+  }
+
+  /** 切到阅读页后延迟一点滚动（LazyForEach 首帧还没建好） */
+  private scrollReadingToCurrentSoon(): void {
+    if (this.currentIndex < 0 || this.currentIndex >= this.lines.length) {
+      return;
+    }
+    const target = this.currentIndex;
+    setTimeout(() => {
+      this.readingScroller.scrollToIndex(target, false, ScrollAlign.CENTER);
+    }, 80);
+  }
+
   /** 阅读页回到当前正在播的那一句 */
   private jumpToCurrentLine(): void {
     if (this.currentIndex < 0 || this.currentIndex >= this.lines.length) {
@@ -4157,7 +4189,8 @@ struct Index {
       this.currentText,
       this.positionMs,
       this.durationMs,
-      this.isPlaying
+      this.isPlaying,
+      this.coverFor(book.coverPath) === undefined ? null : this.coverFor(book.coverPath)
     );
   }
 

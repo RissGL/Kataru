@@ -1,4 +1,5 @@
 import { avSession } from '@kit.AVSessionKit';
+import { image } from '@kit.ImageKit';
 import { common, wantAgent, Want } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -20,6 +21,8 @@ export class MediaSession {
   private activated: boolean = false;
   private lastSubtitle: string = '';
   private lastUpdateMs: number = 0;
+  /** 上一次设置过的封面，避免每秒重复传 PixelMap */
+  private lastArtwork: image.PixelMap | null = null;
 
   /** 创建并激活会话 */
   async start(
@@ -86,7 +89,8 @@ export class MediaSession {
     subtitle: string,
     positionMs: number,
     durationMs: number,
-    isPlaying: boolean
+    isPlaying: boolean,
+    artwork: image.PixelMap | null = null
   ): Promise<void> {
     const session = this.session;
     if (session === null) {
@@ -111,6 +115,11 @@ export class MediaSession {
         artist: subtitle.length > 0 ? subtitle : chapterTitle,
         album: chapterTitle,
       };
+      // 封面：灵动胶囊/锁屏/播控中心显示的图就是这张（不设的话系统只能显示应用图标）
+      if (artwork !== null && artwork !== undefined && this.lastArtwork !== artwork) {
+        metadata.mediaImage = artwork;
+        this.lastArtwork = artwork;
+      }
       await session.setAVMetadata(metadata);
 
       const state: avSession.AVPlaybackState = {
