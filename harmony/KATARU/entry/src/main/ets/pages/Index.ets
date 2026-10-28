@@ -294,6 +294,12 @@ struct Index {
   @State backgroundGradient: number = -1;
   /** 设置页当前分组：0 外观 1 字幕 2 播放 3 其他 */
   @State settingsGroup: number = 0;
+  /** 书架布局：列数(2/3/4)、封面圆角、是否显示卡片进度条 */
+  @State libraryColumns: number = 3;
+  @State bookRadius: number = 6;
+  @State showCardProgress: boolean = true;
+  /** 阅读页独立字号（默认跟字幕字号分开调） */
+  @State readingFontSize: number = 16;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -678,6 +684,10 @@ struct Index {
       this.backgroundBlur = store.getSync('backgroundBlur', 14) as number;
       this.readingLineHeight = store.getSync('readingLineHeight', 24) as number;
       this.readingParagraphGap = store.getSync('readingParagraphGap', 4) as number;
+      this.readingFontSize = store.getSync('readingFontSize', 16) as number;
+      this.libraryColumns = store.getSync('libraryColumns', 3) as number;
+      this.bookRadius = store.getSync('bookRadius', 6) as number;
+      this.showCardProgress = store.getSync('showCardProgress', true) as boolean;
       this.backgroundGradient = store.getSync('backgroundGradient', -1) as number;
       if (this.backgroundPath.length > 0) {
         this.loadBackgroundPixel();
@@ -735,6 +745,10 @@ struct Index {
       store.putSync('backgroundBlur', this.backgroundBlur);
       store.putSync('readingLineHeight', this.readingLineHeight);
       store.putSync('readingParagraphGap', this.readingParagraphGap);
+      store.putSync('readingFontSize', this.readingFontSize);
+      store.putSync('libraryColumns', this.libraryColumns);
+      store.putSync('bookRadius', this.bookRadius);
+      store.putSync('showCardProgress', this.showCardProgress);
       store.putSync('backgroundGradient', this.backgroundGradient);
       store.putSync('showSecondary', this.showSecondary);
       store.putSync('autoNext', this.autoNext);
@@ -1850,7 +1864,7 @@ struct Index {
                 .padding({ left: 2, right: 2 })
 
                 // 收听进度条（桌面版卡片上那条 3px 的）
-                if (this.bookProgress(book) > 0) {
+                if (this.showCardProgress && this.bookProgress(book) > 0) {
                   Progress({
                     value: Math.round(this.bookProgress(book) * 100),
                     total: 100,
@@ -1868,7 +1882,7 @@ struct Index {
             }
           }, (book: Book) => book.folderPath)
         }
-        .columnsTemplate('1fr 1fr 1fr')
+        .columnsTemplate(this.libraryColumnsTemplate())
         .columnsGap(10)
         .rowsGap(14)
         .width('100%')
@@ -2178,7 +2192,7 @@ struct Index {
 
                 Column() {
                   Text(line.text)
-                    .fontSize(16 * this.uiScale)
+                    .fontSize(this.readingFontSize * this.uiScale)
                     .fontFamily(this.uiFont())
                     .lineHeight(this.readingLineHeight * this.uiScale)
                     .width('100%')
@@ -2431,6 +2445,97 @@ struct Index {
           }
           .width('100%')
         }
+
+        Blank().height(6)
+        this.SectionTitle('书架')
+
+        Row() {
+          Text('阅读页字号')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Text(`${Math.round(this.readingFontSize)}`)
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textSecondary)
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .padding({ top: 4 })
+
+        Slider({ value: this.readingFontSize, min: 12, max: 30, step: 1 })
+          .width('100%')
+          .selectedColor(this.theme.accent)
+          .onChange((value: number) => {
+            this.readingFontSize = value;
+            this.saveSettingsSoon();
+          })
+
+        Row() {
+          Text('每行书数')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Row() {
+            ForEach([2, 3, 4], (count: number) => {
+              Text(`${count}`)
+                .fontFamily(this.uiFont())
+                .fontSize(12)
+                .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+                .margin({ left: 6 })
+                .borderRadius(11)
+                .backgroundColor(this.libraryColumns === count ? this.theme.accent : this.theme.panelBackground)
+                .fontColor(this.libraryColumns === count ? '#FFFFFF' : this.theme.textPrimary)
+                .onClick(() => {
+                  this.libraryColumns = count;
+                  this.saveSettings();
+                })
+            }, (count: number) => count.toString())
+          }
+        }
+        .width('100%')
+        .padding({ top: 8, bottom: 4 })
+
+        Row() {
+          Text('封面圆角')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Text(`${Math.round(this.bookRadius)}`)
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textSecondary)
+            .layoutWeight(1)
+            .textAlign(TextAlign.End)
+        }
+        .width('100%')
+        .padding({ top: 4 })
+
+        Slider({ value: this.bookRadius, min: 0, max: 16, step: 1 })
+          .width('100%')
+          .selectedColor(this.theme.accent)
+          .onChange((value: number) => {
+            this.bookRadius = value;
+            this.saveSettingsSoon();
+          })
+
+        Row() {
+          Text('卡片显示进度条')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Toggle({ type: ToggleType.Switch, isOn: this.showCardProgress })
+            .selectedColor(this.theme.accent)
+            .onChange((isOn: boolean) => {
+              this.showCardProgress = isOn;
+              this.saveSettings();
+            })
+        }
+        .width('100%')
+        .padding({ top: 4, bottom: 4 })
 
         Blank().height(6)
         this.SectionTitle('配色')
@@ -3507,6 +3612,17 @@ struct Index {
       this.isPlaying = true;
       this.startTicker();
     }
+  }
+
+  /** 书架的列模板 */
+  private libraryColumnsTemplate(): string {
+    if (this.libraryColumns <= 2) {
+      return '1fr 1fr';
+    }
+    if (this.libraryColumns >= 4) {
+      return '1fr 1fr 1fr 1fr';
+    }
+    return '1fr 1fr 1fr';
   }
 
   /** 阅读页回到当前正在播的那一句 */
