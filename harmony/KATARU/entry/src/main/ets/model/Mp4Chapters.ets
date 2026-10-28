@@ -28,9 +28,16 @@ export class Mp4Chapters {
   private static readonly TAG: string = 'KATARU';
   /** moov 最多读这么大（正常几 MB，防止异常文件吃内存） */
   private static readonly MAX_MOOV: number = 32 * 1024 * 1024;
+  /** 缓存：同一份文件重复调用直接返回（切章时不用再读 8MB） */
+  private static cachePath: string = '';
+  private static cacheMarks: AudioChapterMark[] = [];
 
   /** 读章节表；读不到就返回空数组 */
   static read(path: string): AudioChapterMark[] {
+    if (path === Mp4Chapters.cachePath) {
+      return Mp4Chapters.cacheMarks;
+    }
+
     let file: fileIo.File | null = null;
 
     try {
@@ -94,7 +101,10 @@ export class Mp4Chapters {
       hilog.info(0x0000, Mp4Chapters.TAG, 'moov: %{public}d bytes (declared %{public}d)',
         moov.byteLength, moovSize);
 
-      return Mp4Chapters.walk(moov, 0, moov.byteLength, 0);
+      const parsed = Mp4Chapters.walk(moov, 0, moov.byteLength, 0);
+      Mp4Chapters.cachePath = path;
+      Mp4Chapters.cacheMarks = parsed;
+      return parsed;
     } catch (error) {
       const err = error as BusinessError;
       hilog.warn(0x0000, Mp4Chapters.TAG, 'read chapters failed: code=%{public}d msg=%{public}s',

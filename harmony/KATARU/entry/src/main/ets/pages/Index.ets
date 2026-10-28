@@ -166,11 +166,21 @@ struct Index {
   private keepAliveDataSource: media.AVDataSrcDescriptor | null = null;
   /** .m4b 降级只做一次，避免死循环 */
   private m4bFallbackDone: boolean = false;
+  /** 切章去抖：这个时间点之前忽略新的切章请求（连点不再并发建播放器） */
+  private chapterSwitchLockUntil: number = 0;
+  /** 切章序号：每次切章 +1，异步回来后发现序号变了就丢弃（防串台） */
+  private chapterOpenSeq: number = 0;
+  /** seek 去抖：连点进度条/章节胶囊不再连发 */
+  private seekLockUntil: number = 0;
+  /** m4b 章节表缓存（同一份文件切章不必重复读 8MB moov） */
+  private chapterCachePath: string = '';
+  private chapterCacheMarks: AudioChapterMark[] = [];
+  /** 字幕缓存（多条目，来回切章不用反复解析） */
+  private subtitleCache: Map<string, SubtitleLine[]> = new Map<string, SubtitleLine[]>();
   /** 封面显示方式：false = 完整显示（Contain，不裁切），true = 裁切填充（Cover） */
   private backgroundTaskActive: boolean = false;
   private backgroundWantAgent: WantAgent | null = null;
-  private subtitleCachePath: string = '';
-  private subtitleCacheLines: SubtitleLine[] = [];
+
   private mediaSession: MediaSession = new MediaSession();
   private liveSubtitle: LiveSubtitle = new LiveSubtitle();
   private nowPlaying: NowPlayingNotification = new NowPlayingNotification();
@@ -2347,12 +2357,25 @@ struct Index {
   // ==================== 逻辑：播放 ====================
 
   private async openChapter(chapter: Chapter, autoPlay: boolean = true): Promise<void> {
+    // 连点章节：300ms 内的重复请求直接忽略。
+    // 之前会并发创建多个 AVPlayer，旧的不一定 release 完，既卡又容易崩。
+    const now = Date.now();
+    if (now < this.chapterSwitchLockUntil) {
+      hilog.info(0x0000, Index.TAG, 'chapter switch ignored (debounce)');
+      return;
+    }
+    this.chapterSwitchLockUntil = now + 300;
+
+    // 切章序号：异步回来后发现序号变了就丢弃这次结果，避免串台
+    const seq = ++this.chapterOpenSeq;
+
     this.selectedChapter = chapter;
     this.currentText = '';
     this.secondaryText = '';
     this.currentIndex = -1;
     this.lines = [];
     this.secondaryLines = [];
+    this.lineSource.setLines([]);
     this.synchronizer.clear();
     this.secondarySynchronizer.clear();
     this.positionMs = 0;
@@ -2366,7 +2389,11 @@ struct Index {
       this.loadSecondarySubtitle(chapter.secondarySubtitlePath);
     }
 
-    // 读音频内部章节表（m4b 的 chpl）：一个 12 小时的单文件也能跳章
+    if (seq !== this.chapterOpenSeq) {
+      return;
+    }
+
+    // 读音频内部章节表（m4b 的 chpl）：有缓存，同一份文件切章不再重复读 8MB
     this.embeddedChapters = Mp4Chapters.read(chapter.audioPath);
     this.embeddedIndex = -1;
     hilog.info(0x0000, Index.TAG, 'embedded chapters: %{public}d', this.embeddedChapters.length);
@@ -2377,8 +2404,14 @@ struct Index {
     try {
       await this.releasePlayer();
 
+      if (seq !== this.chapterOpenSeq) {
+        hilog.info(0x0000, Index.TAG, 'chapter open superseded, abort');
+        return;
+      }
+
       const player = await media.createAVPlayer();
       this.player = player;
+
 
       player.on('stateChange', (state: string) => {
         // 已被换掉/释放的播放器，忽略它的回调。
@@ -2813,13 +2846,22 @@ struct Index {
       return;
     }
 
+    // 连点进度条/章节胶囊先去抖：12 小时的单文件连发 seek 会把播放器拖死
+    const now = Date.now();
+    if (now < this.seekLockUntil) {
+      hilog.info(0x0000, Index.TAG, 'seek ignored (debounce)');
+      return;
+    }
+    this.seekLockUntil = now + 250;
+
     let target = Math.max(0, positionMs);
     if (this.durationMs > 0) {
       target = Math.min(target, this.durationMs);
     }
 
     try {
-      player.seek(target, media.SeekMode.SEEK_CLOSEST);
+      // SEEK_PREVIOUS_SYNC 跳到前一个关键帧，比 SEEK_CLOSEST 快很多（长音频尤其明显）
+      player.seek(target, media.SeekMode.SEEK_PREV_SYNC);
       this.positionMs = target;
       this.synchronizer.seek(target);
       this.applyCurrentLine();
@@ -2875,18 +2917,21 @@ struct Index {
 
   private loadSubtitle(path: string): void {
     try {
-      // 同一个字幕文件来回切章时不用重复解析（1 MB 的日文字幕有上万条）
+      // 多条目缓存：来回切章不用反复解析上万条字幕
       let lines: SubtitleLine[] = [];
-      if (path === this.subtitleCachePath && this.subtitleCacheLines.length > 0) {
-        lines = this.subtitleCacheLines;
+      const cachedLines = this.subtitleCache.get(path);
+      if (cachedLines !== undefined && cachedLines.length > 0) {
+        lines = cachedLines;
         hilog.info(0x0000, Index.TAG, 'subtitle cache hit: %{public}d lines', lines.length);
       } else {
         const parseStart = Date.now();
         const content = this.readTextByUri(path);
         const warnings: string[] = [];
         lines = SrtParser.parse(content, warnings);
-        this.subtitleCachePath = path;
-        this.subtitleCacheLines = lines;
+        if (this.subtitleCache.size >= 4) {
+          this.subtitleCache.clear();
+        }
+        this.subtitleCache.set(path, lines);
         hilog.info(0x0000, Index.TAG, 'subtitle parse: %{public}d chars -> %{public}d lines in %{public}d ms',
           content.length, lines.length, Date.now() - parseStart);
       }
@@ -2956,7 +3001,7 @@ struct Index {
       this.lineSource.notifyChanged(previous);
       this.lineSource.notifyChanged(index);
       if (index >= 0) {
-        this.readingScroller.scrollToIndex(index, true, ScrollAlign.CENTER);
+        this.readingScroller.scrollToIndex(index, false, ScrollAlign.CENTER);
       }
     }
   }
