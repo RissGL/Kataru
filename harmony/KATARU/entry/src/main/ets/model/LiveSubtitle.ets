@@ -156,8 +156,12 @@ export class LiveSubtitle {
     subtitle: string,
     sequence: number
   ): liveViewManager.LiveView {
-    const safeTitle = bookTitle.length > 0 ? bookTitle.substring(0, 200) : 'KATARU';
-    const safeSubtitle = subtitle.length > 0 ? subtitle.substring(0, 400) : (chapterTitle.length > 0 ? chapterTitle : '播放中');
+    // 各字段长度上限不同（实测超限直接 401）：
+    // capsule.title / capsule.content 只能放很短的文案，长字幕放到 primary 里
+    const safeTitle = bookTitle.length > 0 ? bookTitle.substring(0, 60) : 'KATARU';
+    const safeSubtitle = subtitle.length > 0 ? subtitle.substring(0, 200) : (chapterTitle.length > 0 ? chapterTitle.substring(0, 200) : '播放中');
+    const capsuleTitle = 'KATARU';
+    const capsuleContent = safeSubtitle.length > 12 ? safeSubtitle.substring(0, 12) : safeSubtitle;
 
     const content: liveViewManager.RichText[] = [{
       text: safeSubtitle
@@ -169,9 +173,12 @@ export class LiveSubtitle {
       icon: this.iconPixel !== null ? this.iconPixel : 'live_icon.png',
       backgroundColor: '#FF121011',
       isContentDisplayed: true,
-      title: safeSubtitle,
-      content: safeTitle
+      title: capsuleTitle,
+      content: capsuleContent
     };
+
+    hilog.info(0x0000, LiveSubtitle.TAG, 'liveView param: capsule=%{public}s / %{public}s primary=%{public}s',
+      capsuleTitle, capsuleContent, safeTitle);
 
     // PROGRESS 场景必须有 layoutData，否则系统报 401
     // 用默认文字模板：只要标题 + 当前这句字幕，不需要进度节点图标
