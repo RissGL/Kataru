@@ -3000,7 +3000,8 @@ struct Index {
       // LazyForEach 不随状态自动重画：手动刷新旧行与新行
       this.lineSource.notifyChanged(previous);
       this.lineSource.notifyChanged(index);
-      if (index >= 0) {
+      // 只有阅读页在前台时才滚动（对 1 万条列表滚动很贵，播放页不需要）
+      if (index >= 0 && this.currentTab === 2) {
         this.readingScroller.scrollToIndex(index, false, ScrollAlign.CENTER);
       }
     }
