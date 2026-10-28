@@ -234,41 +234,78 @@ export class LibraryScanner {
       const stem = LibraryScanner.stemOf(audio);
       const chapter = new Chapter(audioPath, stem);
 
-      // 配对字幕：同名优先，其次同名 + 语言后缀；最后用"归一化名字"再匹配一轮
-      let exact = '';
-      const related: string[] = [];
+      // 配对字幕：先收集这条音频的所有候选，再按语言决定主/译文
+      // 规则（和桌面版一致）：日文原文优先当主字幕，中文/其他语言当译文。
+      // "没有语言标记"（xxx.srt）也算原文——很多书就是这样只有 .srt 和 .zh.srt。
+      const candidates: string[] = [];
       const normalizedStem = stem.toLowerCase();
       for (const subtitle of subtitleFiles) {
         const subStem = LibraryScanner.stemOf(subtitle);
         const normalizedSub = LibraryScanner.normalizeStem(subStem);
-        if (subStem.toLowerCase() === normalizedStem || normalizedSub === normalizedStem) {
-          exact = subtitle;
-        } else if (SubtitleLanguage.isRelatedSubtitle(stem, subStem) ||
-          SubtitleLanguage.isRelatedSubtitle(stem, normalizedSub)) {
-          related.push(subtitle);
+        const matched = subStem.toLowerCase() === normalizedStem || normalizedSub === normalizedStem ||
+          SubtitleLanguage.isRelatedSubtitle(stem, subStem) ||
+          SubtitleLanguage.isRelatedSubtitle(stem, normalizedSub);
+        if (!matched) {
+          continue;
+        }
+        // 0 字节字幕直接丢掉（空文件当主字幕会让阅读页一片空白）
+        try {
+          if (fileIo.statSync(`${folderPath}/${subtitle}`).size <= 0) {
+            continue;
+          }
+        } catch (error) {
+          continue;
+        }
+        candidates.push(subtitle);
+      }
+
+      // 只有一章、只有一条字幕时，直接配上（名字再乱也不至于没字幕）
+      if (candidates.length === 0 && audioFiles.length === 1 && subtitleFiles.length === 1) {
+        candidates.push(subtitleFiles[0]);
+      }
+
+      let chosen = '';
+      let chosenCode = '';
+      let bestScore = -1;
+      for (const candidate of candidates) {
+        const code = SubtitleLanguage.detect(stem, candidate)[0];
+        // 原文（无标记）和日文最高，中文最低（中文通常是要看的译文）
+        let score = 2;
+        if (code === 'ja' || code === '') {
+          score = 3;
+        } else if (code === 'zh') {
+          score = 0;
+        }
+        if (score > bestScore) {
+          bestScore = score;
+          chosen = candidate;
+          chosenCode = code;
         }
       }
 
-      let chosen = exact.length > 0 ? exact : (related.length > 0 ? related[0] : '');
-      // 只有一章、只有一条字幕时，直接配上（名字再乱也不至于没字幕）
-      if (chosen.length === 0 && audioFiles.length === 1 && subtitleFiles.length === 1) {
-        chosen = subtitleFiles[0];
-      }
       if (chosen.length > 0) {
         chapter.subtitlePath = `${folderPath}/${chosen}`;
-        const detected = SubtitleLanguage.detect(stem, chosen);
-        chapter.languageCode = detected[0];
+        chapter.languageCode = chosenCode;
 
-        // 双语：再找一条不同语言的（优先 .zh / .中文）
-        for (const candidate of related) {
+        // 译文：优先中文，其次任何与主字幕语言不同的
+        let secondary = '';
+        let bestSecondaryScore = -1;
+        for (const candidate of candidates) {
           if (candidate === chosen) {
             continue;
           }
-          const other = SubtitleLanguage.detect(stem, candidate);
-          if (other[0] !== chapter.languageCode) {
-            chapter.secondarySubtitlePath = `${folderPath}/${candidate}`;
-            break;
+          const code = SubtitleLanguage.detect(stem, candidate)[0];
+          if (code === chosenCode) {
+            continue;
           }
+          const score = code === 'zh' ? 3 : (code === '' ? 0 : 1);
+          if (score > bestSecondaryScore) {
+            bestSecondaryScore = score;
+            secondary = candidate;
+          }
+        }
+        if (secondary.length > 0) {
+          chapter.secondarySubtitlePath = `${folderPath}/${secondary}`;
         }
       }
 
