@@ -353,6 +353,10 @@ struct Index {
   @State readingSecondarySize: number = 13;
   /** 首页「继续收听」卡片是否显示 */
   @State showResumeCard: boolean = true;
+  /** 章节底部弹层是否展开 */
+  @State showChapterSheet: boolean = false;
+  /** 主字幕语言偏好：original = 原文优先，zh = 中文优先 */
+  @State primarySubtitlePref: string = 'original';
   /** 局域网拉书：服务器地址、连接状态、远端书列表、下载进度 */
   @State shareUrl: string = 'http://192.168.43.1:8765';
   @State shareStatus: string = '';
@@ -760,6 +764,7 @@ struct Index {
       this.readingFontSize = store.getSync('readingFontSize', 16) as number;
       this.readingSecondarySize = store.getSync('readingSecondarySize', 13) as number;
       this.showResumeCard = store.getSync('showResumeCard', true) as boolean;
+      this.primarySubtitlePref = store.getSync('primarySubtitlePref', 'original') as string;
       this.shareUrl = store.getSync('shareUrl', 'http://192.168.43.1:8765') as string;
       this.shareAutoTest = store.getSync('shareAutoTest', false) as boolean;
       this.shareAutoDownloadIndex = store.getSync('shareAutoDownload', -1) as number;
@@ -826,6 +831,7 @@ struct Index {
       store.putSync('readingFontSize', this.readingFontSize);
       store.putSync('readingSecondarySize', this.readingSecondarySize);
       store.putSync('showResumeCard', this.showResumeCard);
+      store.putSync('primarySubtitlePref', this.primarySubtitlePref);
       store.putSync('shareUrl', this.shareUrl);
       store.putSync('libraryColumns', this.libraryColumns);
       store.putSync('bookRadius', this.bookRadius);
@@ -1991,7 +1997,8 @@ struct Index {
   // ==================== ② 播放 ====================
   @Builder
   PlayerPage() {
-    Column() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      Column() {
       if (this.selectedBook !== null && this.coverFor(this.selectedBook.coverPath) !== undefined) {
         Image(this.coverFor(this.selectedBook.coverPath))
           .width(150 * this.uiScale)
@@ -2094,64 +2101,36 @@ struct Index {
           .padding({ left: 24, right: 24, top: 4 })
       }
 
-      // 内嵌章节（m4b 的 chpl）：单文件 12 小时也能跳章
-      if (this.embeddedChapters.length > 0) {
-        Scroll() {
-          Row() {
-            ForEach(this.embeddedChapters, (mark: AudioChapterMark, index: number) => {
-              Text(mark.title.length > 0 ? mark.title : Timecode.formatShort(mark.startMs))
-              .fontFamily(this.uiFont())
-                .fontSize(12)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .constraintSize({ maxWidth: 180 })
-                .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-                .margin({ right: 8 })
-                .borderRadius(14)
-                .backgroundColor(index === this.embeddedIndex
-                  ? this.theme.gold : this.theme.panelBackground)
-                .fontColor(index === this.embeddedIndex
-                  ? '#1A1718' : this.theme.textPrimary)
-                .onClick(() => this.seekTo(mark.startMs))
-            }, (mark: AudioChapterMark, index: number) => index + '-' + mark.startMs)
-          }
-          .padding({ left: 16, right: 16 })
-        }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
-        .width('100%')
-        .margin({ top: 8 })
-      }
+      // 章节入口：点一下从底部弹出章节面板（不再左右滑动去找）
+      if (this.hasChapterList()) {
+        Row() {
+          Image($r('app.media.ic_book'))
+            .width(15)
+            .height(15)
+            .fillColor(this.theme.textSecondary)
 
-      // 章节切换（多文件的书才显示）
-      if (this.selectedBook !== null && this.selectedBook.chapters.length > 1) {
-        Scroll() {
-          Row() {
-            ForEach(this.selectedBook.chapters, (chapter: Chapter, index: number) => {
-              Text(chapter.title)
-              .fontFamily(this.uiFont())
-                .fontSize(12)
-                .maxLines(1)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-                .constraintSize({ maxWidth: 160 })
-                .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-                .margin({ right: 8 })
-                .borderRadius(14)
-                .backgroundColor(this.selectedChapter !== null &&
-                  this.selectedChapter.audioPath === chapter.audioPath
-                  ? this.theme.accent : this.theme.panelBackground)
-                .fontColor(this.selectedChapter !== null &&
-                  this.selectedChapter.audioPath === chapter.audioPath
-                  ? Color.White : this.theme.textPrimary)
-                .onClick(() => this.openChapter(chapter))
-            }, (chapter: Chapter) => chapter.audioPath)
-          }
-          .padding({ left: 16, right: 16 })
+          Text(this.chapterEntryLabel())
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.textPrimary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+            .margin({ left: 6, right: 6 })
+
+          Text('全部章节')
+            .fontFamily(this.uiFont())
+            .fontSize(12)
+            .fontColor(this.theme.gold)
         }
-        .scrollable(ScrollDirection.Horizontal)
-        .scrollBar(BarState.Off)
         .width('100%')
-        .margin({ top: 8 })
+        .padding({ left: 14, right: 14, top: 9, bottom: 9 })
+        .margin({ top: 10 })
+        .borderRadius(10)
+        .backgroundColor(this.theme.panelBackground)
+        .onClick(() => {
+          this.showChapterSheet = true;
+        })
       }
 
       Blank()
@@ -2242,6 +2221,131 @@ struct Index {
           .onClick(() => this.skip(this.skipSeconds * 1000))
       }
       .margin({ top: 10, bottom: 18 })
+    }
+    .width('100%')
+    .height('100%')
+      // 章节弹层：从底部升起（自己画，系统 bindSheet 在 Tabs 里会被立刻关掉）
+      if (this.showChapterSheet) {
+        Column() {
+          Column()
+            .width('100%')
+            .layoutWeight(1)
+            .backgroundColor('#66000000')
+            .onClick(() => {
+              this.showChapterSheet = false;
+            })
+
+          Column() {
+            Column()
+              .width(36)
+              .height(4)
+              .borderRadius(2)
+              .backgroundColor(this.theme.borderSoft)
+              .margin({ top: 8, bottom: 2 })
+
+            this.ChapterSheetContent()
+          }
+          .width('100%')
+          .height('62%')
+          .backgroundColor(this.theme.pageBackground)
+          .borderRadius({ topLeft: 18, topRight: 18 })
+          .shadow({ radius: 24, color: '#60000000', offsetY: -6 })
+        }
+        .width('100%')
+        .height('100%')
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  /** 从底部升起的章节面板内容 */
+  @Builder
+  ChapterSheetContent() {
+    Column() {
+      Row() {
+        Text('章节')
+          .fontFamily(this.uiFont())
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.theme.textPrimary)
+        Blank()
+        Text(this.embeddedChapters.length > 0
+          ? `内嵌 ${this.embeddedChapters.length} 章`
+          : `${this.selectedBook === null ? 0 : this.selectedBook.chapters.length} 章`)
+          .fontFamily(this.uiFont())
+          .fontSize(12)
+          .fontColor(this.theme.textSecondary)
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20, top: 12, bottom: 10 })
+
+      List({ space: 2 }) {
+        if (this.embeddedChapters.length > 0) {
+          ForEach(this.embeddedChapters, (mark: AudioChapterMark, index: number) => {
+            ListItem() {
+              Row() {
+                Text(Timecode.formatShort(mark.startMs))
+                  .fontFamily(this.uiFont())
+                  .fontSize(11)
+                  .width(58)
+                  .fontColor(index === this.embeddedIndex ? this.theme.gold : this.theme.textSecondary)
+
+                Text(mark.title.length > 0 ? mark.title : `第 ${index + 1} 段`)
+                  .fontFamily(this.uiFont())
+                  .fontSize(14)
+                  .fontColor(index === this.embeddedIndex ? this.theme.gold : this.theme.textPrimary)
+                  .fontWeight(index === this.embeddedIndex ? FontWeight.Medium : FontWeight.Normal)
+                  .layoutWeight(1)
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .width('100%')
+              .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+              .backgroundColor(index === this.embeddedIndex ? '#22C9A227' : Color.Transparent)
+              .borderRadius(8)
+              .onClick(() => {
+                this.showChapterSheet = false;
+                this.seekTo(mark.startMs);
+              })
+            }
+          }, (mark: AudioChapterMark, index: number) => index + '-' + mark.startMs)
+        } else if (this.selectedBook !== null) {
+          ForEach(this.selectedBook.chapters, (chapter: Chapter) => {
+            ListItem() {
+              Row() {
+                Image($r('app.media.ic_book'))
+                  .width(14)
+                  .height(14)
+                  .fillColor(this.selectedChapter !== null &&
+                    this.selectedChapter.audioPath === chapter.audioPath
+                    ? this.theme.gold : this.theme.textSecondary)
+
+                Text(chapter.title)
+                  .fontFamily(this.uiFont())
+                  .fontSize(14)
+                  .fontColor(this.selectedChapter !== null &&
+                    this.selectedChapter.audioPath === chapter.audioPath
+                    ? this.theme.gold : this.theme.textPrimary)
+                  .layoutWeight(1)
+                  .margin({ left: 8 })
+                  .maxLines(2)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+              }
+              .width('100%')
+              .padding({ left: 20, right: 20, top: 12, bottom: 12 })
+              .onClick(() => {
+                const target = chapter;
+                this.showChapterSheet = false;
+                this.openChapter(target);
+              })
+            }
+          }, (chapter: Chapter) => chapter.audioPath)
+        }
+      }
+      .layoutWeight(1)
+      .width('100%')
+      .scrollBar(BarState.Auto)
     }
     .width('100%')
     .height('100%')
@@ -2934,6 +3038,33 @@ struct Index {
         .width('100%')
 
         Row() {
+          Text('主字幕用哪种语言')
+            .fontFamily(this.uiFont())
+            .fontSize(13)
+            .fontColor(this.theme.textPrimary)
+          Blank()
+          Row() {
+            ForEach(['original', 'zh'], (code: string) => {
+              Text(code === 'zh' ? '中文优先' : '原文优先')
+                .fontFamily(this.uiFont())
+                .fontSize(12)
+                .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+                .margin({ left: 6 })
+                .borderRadius(12)
+                .backgroundColor(this.primarySubtitlePref === code ? this.theme.accent : this.theme.panelBackground)
+                .fontColor(this.primarySubtitlePref === code ? '#FFFFFF' : this.theme.textPrimary)
+                .onClick(() => {
+                  this.primarySubtitlePref = code;
+                  this.saveSettings();
+                  this.reloadSubtitlesForPreference();
+                })
+            }, (code: string) => code)
+          }
+        }
+        .width('100%')
+        .padding({ top: 8, bottom: 4 })
+
+        Row() {
           Text('字重')
             .fontFamily(this.uiFont())
             .fontSize(13)
@@ -3413,6 +3544,9 @@ struct Index {
     this.durationMs = 0;
     this.stopTicker();
 
+    // 按用户偏好决定主字幕用原文还是中文
+    this.applySubtitlePreference(chapter);
+
     if (chapter.hasSubtitle) {
       this.loadSubtitle(chapter.subtitlePath);
     }
@@ -3870,6 +4004,59 @@ struct Index {
       player.play();
       this.isPlaying = true;
       this.startTicker();
+    }
+  }
+
+  /** 有没有章节列表可展示（内嵌 chpl 或多文件） */
+  private hasChapterList(): boolean {
+    if (this.embeddedChapters.length > 0) {
+      return true;
+    }
+    return this.selectedBook !== null && this.selectedBook.chapters.length > 1;
+  }
+
+  /** 章节入口上显示的名字 */
+  private chapterEntryLabel(): string {
+    if (this.embeddedChapters.length > 0 && this.embeddedIndex >= 0 &&
+      this.embeddedIndex < this.embeddedChapters.length) {
+      const mark = this.embeddedChapters[this.embeddedIndex];
+      return mark.title.length > 0 ? mark.title : Timecode.formatShort(mark.startMs);
+    }
+    const chapter = this.selectedChapter;
+    return chapter === null ? '章节' : chapter.title;
+  }
+
+  /** 按偏好决定这条章节的主字幕/译文（中文优先时把中文换到主位） */
+  private applySubtitlePreference(chapter: Chapter): void {
+    if (this.primarySubtitlePref !== 'zh') {
+      return;
+    }
+    if (chapter.secondarySubtitlePath.length > 0 && chapter.languageCode !== 'zh') {
+      const primary = chapter.subtitlePath;
+      chapter.subtitlePath = chapter.secondarySubtitlePath;
+      chapter.secondarySubtitlePath = primary;
+      chapter.languageCode = 'zh';
+    }
+  }
+
+  /** 改完偏好后立刻重载当前章节字幕（先撤销上次交换再按新偏好选） */
+  private reloadSubtitlesForPreference(): void {
+    const chapter = this.selectedChapter;
+    if (chapter === null) {
+      return;
+    }
+    if (chapter.languageCode === 'zh' && chapter.secondarySubtitlePath.length > 0) {
+      const primary = chapter.subtitlePath;
+      chapter.subtitlePath = chapter.secondarySubtitlePath;
+      chapter.secondarySubtitlePath = primary;
+      chapter.languageCode = '';
+    }
+    this.applySubtitlePreference(chapter);
+    if (chapter.hasSubtitle) {
+      this.loadSubtitle(chapter.subtitlePath);
+    }
+    if (chapter.secondarySubtitlePath.length > 0) {
+      this.loadSecondarySubtitle(chapter.secondarySubtitlePath);
     }
   }
 
