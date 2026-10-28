@@ -168,11 +168,49 @@ export class LibraryScanner {
     const subtitleFiles: string[] = [];
 
     for (const file of files) {
+      // 跳过隐藏文件和桌面端生成的别名（.kataru-xxx-hash.m4a）：
+      // 那不是真的章节，留着只会让一本书多出一个没有字幕的"章"。
+      if (file.startsWith('.') || file.indexOf('.kataru-') >= 0) {
+        continue;
+      }
       const lower = file.toLowerCase();
       if (LibraryScanner.matches(lower, LibraryScanner.AUDIO_EXT)) {
         audioFiles.push(file);
       } else if (lower.endsWith(LibraryScanner.SUBTITLE_EXT)) {
         subtitleFiles.push(file);
+      }
+    }
+
+    // 子目录里的音频/字幕也要扫（局域网同步会保留原目录结构）
+    const subDirs: string[] = [];
+    for (const file of files) {
+      if (file.startsWith('.')) {
+        continue;
+      }
+      try {
+        if (fileIo.statSync(`${folderPath}/${file}`).isDirectory()) {
+          subDirs.push(file);
+        }
+      } catch (error) {
+        // 忽略
+      }
+    }
+    for (const sub of subDirs) {
+      let subFiles: string[] = [];
+      try {
+        subFiles = fileIo.listFileSync(`${folderPath}/${sub}`);
+      } catch (error) {
+        continue;
+      }
+      for (const file of subFiles) {
+        if (file.startsWith('.') || file.indexOf('.kataru-') >= 0) {
+          continue;
+        }
+        // 只收录字幕：音频永远只在书文件夹这一层，否则书库根目录会被当成一本书
+        const lower = file.toLowerCase();
+        if (lower.endsWith(LibraryScanner.SUBTITLE_EXT)) {
+          subtitleFiles.push(sub + '/' + file);
+        }
       }
     }
 
@@ -196,19 +234,26 @@ export class LibraryScanner {
       const stem = LibraryScanner.stemOf(audio);
       const chapter = new Chapter(audioPath, stem);
 
-      // 配对字幕：同名优先，其次同名 + 语言后缀
+      // 配对字幕：同名优先，其次同名 + 语言后缀；最后用"归一化名字"再匹配一轮
       let exact = '';
       const related: string[] = [];
+      const normalizedStem = stem.toLowerCase();
       for (const subtitle of subtitleFiles) {
         const subStem = LibraryScanner.stemOf(subtitle);
-        if (subStem.toLowerCase() === stem.toLowerCase()) {
+        const normalizedSub = LibraryScanner.normalizeStem(subStem);
+        if (subStem.toLowerCase() === normalizedStem || normalizedSub === normalizedStem) {
           exact = subtitle;
-        } else if (SubtitleLanguage.isRelatedSubtitle(stem, subStem)) {
+        } else if (SubtitleLanguage.isRelatedSubtitle(stem, subStem) ||
+          SubtitleLanguage.isRelatedSubtitle(stem, normalizedSub)) {
           related.push(subtitle);
         }
       }
 
-      const chosen = exact.length > 0 ? exact : (related.length > 0 ? related[0] : '');
+      let chosen = exact.length > 0 ? exact : (related.length > 0 ? related[0] : '');
+      // 只有一章、只有一条字幕时，直接配上（名字再乱也不至于没字幕）
+      if (chosen.length === 0 && audioFiles.length === 1 && subtitleFiles.length === 1) {
+        chosen = subtitleFiles[0];
+      }
       if (chosen.length > 0) {
         chapter.subtitlePath = `${folderPath}/${chosen}`;
         const detected = SubtitleLanguage.detect(stem, chosen);
@@ -289,10 +334,41 @@ export class LibraryScanner {
 
   /** 去掉扩展名 */
   static stemOf(fileName: string): string {
-    const dot = fileName.lastIndexOf('.');
-    return dot > 0 ? fileName.substring(0, dot) : fileName;
+    // 支持 "子目录/文件名" 这种相对路径
+    let name = fileName;
+    const slash = name.lastIndexOf('/');
+    if (slash >= 0) {
+      name = name.substring(slash + 1);
+    }
+    const dot = name.lastIndexOf('.');
+    return dot > 0 ? name.substring(0, dot) : name;
   }
 
+  /** 归一化名字：去掉 .kataru- 前缀和末尾 -<16位十六进制>，全小写 */
+  static normalizeStem(stem: string): string {
+    let result = stem;
+    if (result.startsWith('.kataru-')) {
+      result = result.substring(8);
+    }
+    const dash = result.lastIndexOf('-');
+    if (dash > 0 && result.length - dash === 17) {
+      const tail = result.substring(dash + 1);
+      let allHex = true;
+      for (let i = 0; i < tail.length; i++) {
+        const c = tail.charAt(i).toLowerCase();
+        const isDigit = c >= '0' && c <= '9';
+        const isHex = c >= 'a' && c <= 'f';
+        if (!isDigit && !isHex) {
+          allHex = false;
+          break;
+        }
+      }
+      if (allHex) {
+        result = result.substring(0, dash);
+      }
+    }
+    return result.toLowerCase();
+  }
   /**
    * 自然排序：让 "第2章" 排在 "第10章" 前面。
    * 做法是把数字段当数值比较，其余按字符串比。

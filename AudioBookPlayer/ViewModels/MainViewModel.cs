@@ -1685,6 +1685,11 @@ namespace AudioBookPlayer.ViewModels
                         long size = 0;
                         try { size = new FileInfo(path).Length; } catch { }
                         var relative = Path.GetRelativePath(bookRoot, path).Replace('\\', '/');
+                        // .kataru-* 是桌面端给 .m4b 建的播放别名，不该发给手机（会造成一本书两章）
+                        if (relative.StartsWith(".") || relative.Contains(".kataru-"))
+                        {
+                            continue;
+                        }
                         var lower = relative.ToLowerInvariant();
                         var kind = lower.EndsWith(".srt") || lower.EndsWith(".ass") || lower.EndsWith(".vtt")
                             ? "subtitle"

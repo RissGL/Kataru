@@ -3500,38 +3500,19 @@ struct Index {
       //   libmedia_avplayer → napi_call_function → panda::JSValueRef::IsFunction → SIGSEGV
       // 也就是原生线程回调一个已经失效的 JS 函数句柄。10 次崩溃全是这个签名。
       // 现在改成：同步时把 .m4b 落盘成 .m4a，播放走 fdSrc，彻底不碰 JS 回调。
+      // AVPlayer 按扩展名认格式；统一先把 .m4b 改名成 .m4a，播放只走 fdSrc
+      this.ensureM4a(chapter);
+
       const file = fileIo.openSync(chapter.audioPath, fileIo.OpenMode.READ_ONLY);
       const stat = fileIo.statSync(file.fd);
       this.currentAudioFile = file;
       hilog.info(0x0000, Index.TAG, 'open audio: %{public}s (%{public}d bytes)',
         chapter.audioPath, stat.size);
 
-      if (chapter.audioPath.toLowerCase().endsWith('.m4b')) {
-        // 保留 .m4b 原名：AVPlayer 按扩展名不认它，只能用数据源喂字节流。
-        // 关键是把 descriptor 挂到字段上长期持有，否则 GC 后原生回调会崩（cppcrash）。
-        const fd = file.fd;
-        const descriptor: media.AVDataSrcDescriptor = {
-          fileSize: stat.size,
-          callback: (buffer: ArrayBuffer, length: number, pos?: number): number => {
-            const offset = pos === undefined ? 0 : pos;
-            try {
-              return fileIo.readSync(fd, buffer, { offset: offset, length: length });
-            } catch (readError) {
-              return -2;
-            }
-          }
-        };
-        this.keepAliveDataSource = descriptor;
-        const source = media.createMediaSourceWithDataSource(descriptor);
-        if (source === undefined) {
-          this.statusText = '无法创建音频数据源（.m4b）';
-          return;
-        }
-        hilog.info(0x0000, Index.TAG, 'open .m4b via data source: %{public}s', chapter.title);
-        await player.setMediaSource(source);
-      } else {
-        player.fdSrc = { fd: file.fd, offset: 0, length: stat.size };
-      }
+      // 只用 fdSrc：AVDataSrcDescriptor 的 JS 回调会被原生线程在 GC 后调用，
+      // 必崩（cppcrash: libmedia_avplayer → napi_call_function → SIGV）。
+      // .m4b 在打开前已经被改名成 .m4a（见 ensureM4a），所以这里永远是 fdSrc。
+      player.fdSrc = { fd: file.fd, offset: 0, length: stat.size };
     } catch (error) {
       const err = error as BusinessError;
       this.statusText = `打开音频失败：${err.message}`;
@@ -3604,6 +3585,31 @@ struct Index {
       this.stopTicker();
       this.stopBackgroundPlayback();
       this.onChapterCompleted();
+    }
+  }
+
+  /**
+   * 确保音频是 .m4a：AVPlayer 不认 .m4b 扩展名，而数据源回调会导致 cppcrash，
+   * 所以直接把沙箱里的 .m4b 改名（同目录、同内容、字幕配对不受影响）。
+   */
+  private ensureM4a(chapter: Chapter): void {
+    const path = chapter.audioPath;
+    if (!path.toLowerCase().endsWith('.m4b')) {
+      return;
+    }
+    const target = path.substring(0, path.length - 4) + '.m4a';
+    try {
+      if (!fileIo.accessSync(target)) {
+        fileIo.renameSync(path, target);
+        hilog.info(0x0000, Index.TAG, 'renamed .m4b -> .m4a: %{public}s', target);
+      } else {
+        // 目标已存在（重复下载过），删掉 .m4b 免得占两份空间
+        fileIo.unlinkSync(path);
+        hilog.info(0x0000, Index.TAG, 'removed duplicate .m4b: %{public}s', path);
+      }
+      chapter.audioPath = target;
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'ensureM4a failed: %{public}s', JSON.stringify(error));
     }
   }
 
@@ -3900,6 +3906,10 @@ struct Index {
 
     try {
       for (const book of this.books) {
+        // 只处理真正的书：跳过书库根目录
+        if (book.folderPath === this.libraryRoot) {
+          continue;
+        }
         if (book.coverPath.length > 0 || book.chapters.length === 0) {
           continue;
         }
