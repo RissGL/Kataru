@@ -76,6 +76,26 @@ class ShareLibraryResponse {
 const PREFS_NAME: string = 'kataru_settings';
 const PREF_KEY_ROOT: string = 'library_uri';
 
+/** 回传给电脑的进度载荷 */
+class ProgressPayload {
+  audioName: string = '';
+  positionSeconds: number = 0;
+  durationSeconds: number = 0;
+}
+
+/** 统计柱状图的一根柱子 */
+class DailyBar {
+  label: string = '';
+  minutes: number = 0;
+  isToday: boolean = false;
+
+  constructor(label: string, minutes: number, isToday: boolean) {
+    this.label = label;
+    this.minutes = minutes;
+    this.isToday = isToday;
+  }
+}
+
 /** 一个字幕颜色选项 */
 class ColorChoice {
   name: string = '';
@@ -358,6 +378,12 @@ struct Index {
   @State showResumeCard: boolean = true;
   /** 章节底部弹层是否展开 */
   @State showChapterSheet: boolean = false;
+  /** 收听统计：{ "2026-10-28": 42 } 表示那天听了 42 分钟 */
+  @State dailyStats: Record<string, number> = {};
+  /** 今天的最长连续收听天数（展示用） */
+  @State streakDays: number = 0;
+  /** 本周总分钟数 */
+  @State weekMinutes: number = 0;
   /** 桌面卡片状态（设置页展示） */
   @State cardStatusText: string = '未添加到桌面';
   /** 主字幕语言偏好：original = 原文优先，zh = 中文优先 */
@@ -372,6 +398,11 @@ struct Index {
   private shareAutoDownloadIndex: number = -1;
   /** 正在从 m4b 里抠封面（避免 refresh 递归） */
   private embeddedCoverBusy: boolean = false;
+  /** 收听时长累计（毫秒）：攒够 30 秒才落盘 */
+  private pendingStatMs: number = 0;
+  private lastStatMs: number = 0;
+  /** 上次把进度回传电脑的时间 */
+  private lastProgressPushMs: number = 0;
   @State fontChoices: FontChoice[] = [
     new FontChoice('系统默认', 'HarmonyOS Sans SC'),
     new FontChoice('黑体', 'HarmonyOS Sans'),
@@ -391,6 +422,7 @@ struct Index {
 
     this.loadSettings();
     this.loadFavorites();
+    this.loadDailyStats();
 
     // 打开本地书库（App 私有目录）：不依赖任何权限，重启/重装都不会丢。
     // 「书库文件夹」只是同步源，书架空的时候选一次即可。
@@ -3333,7 +3365,69 @@ struct Index {
         }
 
         if (this.settingsGroup === 3) {
+        this.SectionTitle('收听统计')
+
+        Row() {
+          Column() {
+            Text(this.weekMinutes >= 60 ? (this.weekMinutes / 60).toFixed(1) : `${Math.round(this.weekMinutes)}`)
+              .fontFamily(this.uiFont())
+              .fontSize(22)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.theme.gold)
+            Text(this.weekMinutes >= 60 ? '小时 · 本周' : '分钟 · 本周')
+              .fontFamily(this.uiFont())
+              .fontSize(11)
+              .fontColor(this.theme.textSecondary)
+              .margin({ top: 2 })
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Column() {
+            Text(`${this.streakDays}`)
+              .fontFamily(this.uiFont())
+              .fontSize(22)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.theme.textPrimary)
+            Text('连续收听天数')
+              .fontFamily(this.uiFont())
+              .fontSize(11)
+              .fontColor(this.theme.textSecondary)
+              .margin({ top: 2 })
+          }
+          .alignItems(HorizontalAlign.End)
+        }
+        .width('100%')
+        .padding({ top: 6, bottom: 10 })
+
+        Row() {
+          ForEach(this.lastSevenDays(), (bar: DailyBar) => {
+            Column() {
+              Column()
+                .width(18)
+                .height(this.barHeight(bar.minutes))
+                .borderRadius(4)
+                .backgroundColor(bar.isToday ? this.theme.gold : this.theme.accent)
+                .opacity(bar.minutes > 0 ? 1 : 0.25)
+
+              Text(bar.label)
+                .fontFamily(this.uiFont())
+                .fontSize(9)
+                .fontColor(bar.isToday ? this.theme.gold : this.theme.textSecondary)
+                .margin({ top: 4 })
+            }
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.End)
+          }, (bar: DailyBar) => bar.label)
+        }
+        .width('100%')
+        .height(90)
+        .alignItems(VerticalAlign.Bottom)
+        .margin({ bottom: 6 })
+
+        Blank().height(6)
         this.SectionTitle('书库管理')
+
 
         Text('删掉手机里的副本，不影响电脑上的原文件')
           .fontFamily(this.uiFont())
@@ -4023,6 +4117,8 @@ struct Index {
 
   /** 存当前位置；force=false 时最多 5 秒存一次，避免刷盘太频繁 */
   private saveProgress(force: boolean): void {
+    // 暂停/切后台时顺手把进度回传电脑（内部自己有 60 秒节流）
+    this.pushProgressToServer(false);
     const chapter = this.selectedChapter;
     if (chapter === null) {
       return;
@@ -4104,6 +4200,169 @@ struct Index {
       });
     }
     return shadows;
+  }
+
+  /** 把播放时间累计到"今天"（每 200ms 一次，攒够 30 秒才写盘） */
+  private accumulateListenTime(): void {
+    const now = Date.now();
+    if (this.lastStatMs <= 0) {
+      this.lastStatMs = now;
+      return;
+    }
+    const deltaMs = now - this.lastStatMs;
+    this.lastStatMs = now;
+    // 单次间隔过大（比如切后台回来）不计，避免把睡觉时间算成收听
+    if (deltaMs <= 0 || deltaMs > 5000) {
+      return;
+    }
+    this.pendingStatMs += deltaMs;
+    if (this.pendingStatMs < 30000) {
+      return;
+    }
+    this.flushListenTime();
+  }
+
+  /** 把攒下的收听时长写进当天 */
+  private flushListenTime(): void {
+    if (this.pendingStatMs < 1000) {
+      return;
+    }
+    const minutes = this.pendingStatMs / 60000;
+    this.pendingStatMs = 0;
+    const key = this.todayKey();
+    const current = this.dailyStats[key] === undefined ? 0 : this.dailyStats[key];
+    this.dailyStats[key] = current + minutes;
+    this.saveDailyStats();
+    this.recomputeStats();
+  }
+
+  private todayKey(): string {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    return `${now.getFullYear()}-${month < 10 ? '0' : ''}${month}-${day < 10 ? '0' : ''}${day}`;
+  }
+
+  /** 重算"本周总量"和"连续天数" */
+  private recomputeStats(): void {
+    let week = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = `${d.getFullYear()}-${d.getMonth() + 1 < 10 ? '0' : ''}${d.getMonth() + 1}-${d.getDate() < 10 ? '0' : ''}${d.getDate()}`;
+      const value = this.dailyStats[key];
+      if (value !== undefined) {
+        week += value;
+      }
+    }
+    this.weekMinutes = week;
+
+    let streak = 0;
+    for (let i = 0; i < 365; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = `${d.getFullYear()}-${d.getMonth() + 1 < 10 ? '0' : ''}${d.getMonth() + 1}-${d.getDate() < 10 ? '0' : ''}${d.getDate()}`;
+      const value = this.dailyStats[key];
+      if (value !== undefined && value >= 1) {
+        streak++;
+      } else if (i > 0) {
+        break;
+      }
+    }
+    this.streakDays = streak;
+  }
+
+  /** 最近 7 天的分钟数（柱状图用，最后一个是今天） */
+  private lastSevenDays(): DailyBar[] {
+    const bars: DailyBar[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = `${d.getFullYear()}-${d.getMonth() + 1 < 10 ? '0' : ''}${d.getMonth() + 1}-${d.getDate() < 10 ? '0' : ''}${d.getDate()}`;
+      const value = this.dailyStats[key] === undefined ? 0 : this.dailyStats[key];
+      bars.push(new DailyBar(`${d.getMonth() + 1}/${d.getDate()}`, value, i === 0));
+    }
+    return bars;
+  }
+
+  private saveDailyStats(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: PREFS_NAME });
+      store.putSync('daily_stats', JSON.stringify(this.dailyStats));
+      store.flush();
+    } catch (error) {
+      hilog.warn(0x0000, Index.TAG, 'save daily stats failed: %{public}s', JSON.stringify(error));
+    }
+  }
+
+  private loadDailyStats(): void {
+    try {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const store = preferences.getPreferencesSync(context, { name: PREFS_NAME });
+      const raw = store.getSync('daily_stats', '') as string;
+      if (raw.length > 0) {
+        this.dailyStats = JSON.parse(raw) as Record<string, number>;
+      }
+      this.recomputeStats();
+    } catch (error) {
+      this.dailyStats = {};
+    }
+  }
+
+  /** 柱状图高度：按最大 120 分钟归一，最少 4px 让空柱子也可见 */
+  private barHeight(minutes: number): number {
+    const max = 120;
+    const ratio = Math.min(1, minutes / max);
+    return 4 + ratio * 56;
+  }
+
+  /**
+   * 把当前进度回传给电脑（局域网双向同步）。
+   * 只在电脑开着共享、且当前书是从电脑拉过来的时候才有效。
+   */
+  private async pushProgressToServer(force: boolean): Promise<void> {
+    const book = this.selectedBook;
+    const chapter = this.selectedChapter;
+    if (book === null || chapter === null || this.durationMs <= 0) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!force && now - this.lastProgressPushMs < 60000) {
+      return;
+    }
+    this.lastProgressPushMs = now;
+
+    const base = this.shareUrl.trim().replace(/\/+$/, '');
+    if (base.length === 0) {
+      return;
+    }
+
+    const audioName = chapter.audioPath.substring(chapter.audioPath.lastIndexOf('/') + 1);
+    const payload = JSON.stringify({
+      audioName: audioName,
+      positionSeconds: this.positionMs / 1000,
+      durationSeconds: this.durationMs / 1000
+    } as ProgressPayload);
+
+    try {
+      const client = http.createHttp();
+      const response = await client.request(base + '/api/progress', {
+        method: http.RequestMethod.POST,
+        header: { 'Content-Type': 'application/json' },
+        extraData: payload,
+        connectTimeout: 5000,
+        readTimeout: 5000
+      });
+      client.destroy();
+      if (response.responseCode === 200) {
+        hilog.info(0x0000, Index.TAG, 'progress pushed: %{public}s', audioName);
+      }
+    } catch (error) {
+      // 电脑没开共享 / 不在同一网络：静默失败，不影响播放
+      hilog.debug(0x0000, Index.TAG, 'progress push skipped');
+    }
   }
 
   /** 刷新「桌面悬浮字幕」的状态文字 */
@@ -4711,6 +4970,7 @@ struct Index {
     // 睡眠定时：到点自动暂停
     this.checkSleepTimer();
 
+    this.accumulateListenTime();
     this.positionMs = currentMs;
     this.synchronizer.update(currentMs);
     this.secondarySynchronizer.update(currentMs);
@@ -4980,8 +5240,8 @@ struct Index {
       context,
       () => this.resumeFromSystem(),
       () => this.pauseFromSystem(),
-      () => this.playNextChapter(),
-      () => this.playPreviousChapter(),
+      () => this.jumpSentence(1),
+      () => this.jumpSentence(-1),
       (positionMs: number) => this.seekTo(positionMs)
     );
     await this.mediaSession.setLaunchAbility(context);
@@ -5022,6 +5282,51 @@ struct Index {
     }
     player.pause();
     this.saveProgress(true);
+  }
+
+  /**
+   * 按句跳：delta=1 下一句，delta=-1 上一句（播控中心的上一首/下一首就是它）。
+   * 没有字幕时退回按章跳。
+   */
+  private jumpSentence(delta: number): void {
+    if (this.lines.length === 0) {
+      if (delta > 0) {
+        this.playNextChapter();
+      } else {
+        this.playPreviousChapter();
+      }
+      return;
+    }
+
+    // 当前位置之前/之后最近的一条字幕
+    let target = -1;
+    if (delta > 0) {
+      for (let i = 0; i < this.lines.length; i++) {
+        if (this.lines[i].startMs > this.positionMs + 200) {
+          target = i;
+          break;
+        }
+      }
+    } else {
+      for (let i = this.lines.length - 1; i >= 0; i--) {
+        if (this.lines[i].startMs < this.positionMs - 800) {
+          target = i;
+          break;
+        }
+      }
+    }
+
+    if (target < 0) {
+      if (delta > 0) {
+        this.playNextChapter();
+      } else {
+        this.playPreviousChapter();
+      }
+      return;
+    }
+
+    this.seekTo(this.lines[target].startMs);
+    this.statusText = delta > 0 ? '下一句' : '上一句';
   }
 
   private playNextChapter(): void {

@@ -1627,6 +1627,7 @@ namespace AudioBookPlayer.ViewModels
             {
                 var server = new LanShareServer();
                 server.LibraryProvider = BuildShareEntries;
+                server.ProgressReceiver = ApplyRemoteProgress;
                 server.Start();
                 _lanShare = server;
 
@@ -1639,6 +1640,51 @@ namespace AudioBookPlayer.ViewModels
             catch (Exception ex)
             {
                 LanShareStatus = "启动失败：" + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// 手机回传的进度写进本地 PlaybackStore：按音频文件名匹配本机文件。
+        /// body 形如 {"audioName":"01 - xxx.m4b","positionSeconds":123.4,"durationSeconds":5000}
+        /// </summary>
+        private bool ApplyRemoteProgress(string json)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("audioName", out var nameElement)) return false;
+                var audioName = nameElement.GetString();
+                if (string.IsNullOrWhiteSpace(audioName)) return false;
+
+                var positionSeconds = root.TryGetProperty("positionSeconds", out var posElement) ? posElement.GetDouble() : 0;
+                var durationSeconds = root.TryGetProperty("durationSeconds", out var durElement) ? durElement.GetDouble() : 0;
+
+                foreach (var book in Books)
+                {
+                    foreach (var entry in book.Entries)
+                    {
+                        if (!string.Equals(Path.GetFileName(entry.AudioPath), audioName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        _playback.Update(
+                            entry.AudioPath,
+                            TimeSpan.FromSeconds(positionSeconds),
+                            TimeSpan.FromSeconds(durationSeconds > 0 ? durationSeconds : 1));
+                        _playback.Save(force: true);
+                        LanShareStatus = $"已接收手机进度：{book.Title}";
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LanShareStatus = "手机进度解析失败：" + ex.Message;
+                return false;
             }
         }
 

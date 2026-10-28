@@ -60,5 +60,15 @@ struct SubtitleCard {
     .padding(12)
     .alignItems(HorizontalAlign.Start)
     .backgroundColor('#1A1718')
+    // 点卡片直接回到 App（继续听）
+    .onClick(() => {
+      postCardAction(this, {
+        action: 'router',
+        abilityName: 'EntryAbility',
+        params: {
+          'fromCard': '1'
+        }
+      });
+    })
   }
 }

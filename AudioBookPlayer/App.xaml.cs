@@ -134,6 +134,47 @@ namespace AudioBookPlayer
 
             var server = new LanShareServer();
             server.LibraryProvider = () => entries;
+
+            // 手机回传进度：按音频文件名匹配，直接写进本机 playback.json
+            var playbackStore = PlaybackStore.Load();
+            server.ProgressReceiver = json =>
+            {
+                try
+                {
+                    Console.WriteLine("progress raw(" + json.Length + "): " + json);
+                    using var doc = System.Text.Json.JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+                    if (!root.TryGetProperty("audioName", out var nameElement)) return false;
+                    var audioName = nameElement.GetString();
+                    if (string.IsNullOrWhiteSpace(audioName)) return false;
+
+                    var positionSeconds = root.TryGetProperty("positionSeconds", out var pos) ? pos.GetDouble() : 0;
+                    var durationSeconds = root.TryGetProperty("durationSeconds", out var dur) ? dur.GetDouble() : 0;
+
+                    foreach (var entry in entries)
+                    {
+                        for (var i = 0; i < entry.AudioPaths.Count; i++)
+                        {
+                            if (!string.Equals(Path.GetFileName(entry.AudioPaths[i]), audioName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+
+                            playbackStore.Update(entry.AudioPaths[i], TimeSpan.FromSeconds(positionSeconds),
+                                TimeSpan.FromSeconds(durationSeconds > 0 ? durationSeconds : 1));
+                            playbackStore.Save(force: true);
+                            Console.WriteLine($"收到手机进度：{audioName} @ {TimeSpan.FromSeconds(positionSeconds)}");
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("progress parse failed: " + ex.Message);
+                    return false;
+                }
+            };
             server.Start();
 
             Console.WriteLine($"KATARU 局域网共享已启动：{entries.Count} 本 / {result.Entries.Count} 章");

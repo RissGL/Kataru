@@ -70,6 +70,9 @@ public sealed class LanShareServer : IDisposable
     /// <summary>每次请求时现取书库，避免共享期间扫描结果过期。</summary>
     public Func<IReadOnlyList<ShareBookEntry>>? LibraryProvider { get; set; }
 
+    /// <summary>手机回传进度：参数是 JSON body，返回是否接受。</summary>
+    public Func<string, bool>? ProgressReceiver { get; set; }
+
     public LanShareServer(int port = DefaultPort)
     {
         Port = port;
@@ -186,14 +189,7 @@ public sealed class LanShareServer : IDisposable
                 var request = await ReadRequestAsync(stream).ConfigureAwait(false);
                 if (request == null) return;
 
-                var (method, target, headers) = request.Value;
-                if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase))
-                {
-                    await WriteTextAsync(stream, 405, "text/plain; charset=utf-8", "method not allowed").ConfigureAwait(false);
-                    return;
-                }
-
+                var (method, target, headers, body) = request.Value;
                 var path = target;
                 var query = "";
                 var q = target.IndexOf('?');
@@ -213,6 +209,21 @@ public sealed class LanShareServer : IDisposable
                 {
                     var json = JsonSerializer.Serialize(BuildLibraryDto(), JsonOpts);
                     await WriteTextAsync(stream, 200, "application/json; charset=utf-8", json).ConfigureAwait(false);
+                    return;
+                }
+
+                if (path == "/api/progress" && string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+                {
+                    var accepted = ProgressReceiver?.Invoke(body) ?? false;
+                    await WriteTextAsync(stream, accepted ? 200 : 400, "application/json; charset=utf-8",
+                        accepted ? "{\"ok\":true}" : "{\"ok\":false}").ConfigureAwait(false);
+                    return;
+                }
+
+                if (!string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(method, "HEAD", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteTextAsync(stream, 405, "text/plain; charset=utf-8", "method not allowed").ConfigureAwait(false);
                     return;
                 }
 
@@ -441,7 +452,7 @@ public sealed class LanShareServer : IDisposable
         };
     }
 
-    private static async Task<(string Method, string Target, Dictionary<string, string> Headers)?> ReadRequestAsync(NetworkStream stream)
+    private static async Task<(string Method, string Target, Dictionary<string, string> Headers, string Body)?> ReadRequestAsync(NetworkStream stream)
     {
         var buffer = new byte[8192];
         var total = 0;
@@ -474,7 +485,32 @@ public sealed class LanShareServer : IDisposable
             headers[lines[i][..colon].Trim()] = lines[i][(colon + 1)..].Trim();
         }
 
-        return (parts[0], parts[1], headers);
+        // 读 body（Content-Length 指定）
+        var body = "";
+        if (headers.TryGetValue("content-length", out var lengthText) && int.TryParse(lengthText, out var contentLength) &&
+            contentLength > 0 && contentLength < 1024 * 1024)
+        {
+            var headerEnd = head.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+            var bodyStart = headerEnd >= 0 ? headerEnd + 4 : head.Length;
+            var alreadyRead = total - bodyStart;
+            var bytes = new List<byte>();
+            if (alreadyRead > 0)
+            {
+                var slice = new byte[alreadyRead];
+                Array.Copy(buffer, bodyStart, slice, 0, alreadyRead);
+                bytes.AddRange(slice);
+            }
+            while (bytes.Count < contentLength)
+            {
+                var chunk = new byte[8192];
+                var read = await stream.ReadAsync(chunk.AsMemory(0, chunk.Length)).ConfigureAwait(false);
+                if (read <= 0) break;
+                for (var i = 0; i < read; i++) bytes.Add(chunk[i]);
+            }
+            body = Encoding.UTF8.GetString(bytes.ToArray());
+        }
+
+        return (parts[0], parts[1], headers, body);
     }
 
     private static async Task WriteTextAsync(NetworkStream stream, int status, string contentType, string body)
